@@ -1,0 +1,4 @@
+from app.db.session import Base,engine
+import app.models
+Base.metadata.create_all(bind=engine)
+print("Database tables created.")

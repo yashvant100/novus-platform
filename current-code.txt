@@ -1,0 +1,2048 @@
+
+============================================================
+FILE: app/models/models.py
+============================================================
+from datetime import datetime, timezone
+from enum import Enum
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.session import Base
+
+
+def utcnow():
+    return datetime.now(timezone.utc)
+
+
+class UserRole(str, Enum):
+    ADMIN = "ADMIN"
+    URL_MANAGER = "URL_MANAGER"
+    VIEWER = "VIEWER"
+
+
+class MonitorStatus(str, Enum):
+    UNKNOWN = "UNKNOWN"
+    UP = "UP"
+    DOWN = "DOWN"
+
+
+class IncidentStatus(str, Enum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+
+
+class ProviderType(str, Enum):
+    SMTP = "SMTP"
+    GMAIL = "GMAIL"
+    MICROSOFT = "MICROSOFT"
+    AWS_SES = "AWS_SES"
+    SENDGRID = "SENDGRID"
+    CUSTOM = "CUSTOM"
+
+
+# ==========================================================
+# USERS
+# ==========================================================
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    email: Mapped[str] = mapped_column(
+        String(320),
+        unique=True,
+        index=True,
+    )
+
+    password_hash: Mapped[str] = mapped_column(
+        String(512)
+    )
+
+    role: Mapped[UserRole] = mapped_column(
+        String(32),
+        default=UserRole.VIEWER,
+        index=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+# ==========================================================
+# REFRESH TOKENS
+# ==========================================================
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
+        index=True,
+    )
+
+    token_hash: Mapped[str] = mapped_column(
+        String(128),
+        unique=True,
+        index=True,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+    )
+
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+
+# ==========================================================
+# MONITORS
+# ==========================================================
+
+class Monitor(Base):
+    __tablename__ = "monitors"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(200)
+    )
+
+    url: Mapped[str] = mapped_column(
+        String(2048)
+    )
+
+    method: Mapped[str] = mapped_column(
+        String(10),
+        default="GET",
+    )
+
+    expected_status: Mapped[int] = mapped_column(
+        Integer,
+        default=200,
+    )
+
+    timeout_seconds: Mapped[int] = mapped_column(
+        Integer,
+        default=10,
+    )
+
+    interval_seconds: Mapped[int] = mapped_column(
+        Integer,
+        default=60,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        index=True,
+    )
+
+    # ======================================================
+    # SSL MONITORING
+    # ======================================================
+
+    ssl_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    status: Mapped[MonitorStatus] = mapped_column(
+        String(16),
+        default=MonitorStatus.UNKNOWN,
+        index=True,
+    )
+
+    created_by: Mapped[int] = mapped_column(
+        ForeignKey("users.id")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+# ==========================================================
+# MONITOR CHECKS
+# ==========================================================
+
+class MonitorCheck(Base):
+    __tablename__ = "monitor_checks"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    monitor_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "monitors.id",
+            ondelete="CASCADE",
+        ),
+        index=True,
+    )
+
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        index=True,
+    )
+
+    status: Mapped[MonitorStatus] = mapped_column(
+        String(16),
+        index=True,
+    )
+
+    http_status: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    response_time_ms: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # ======================================================
+    # SSL CHECK RESULTS
+    # ======================================================
+
+    ssl_valid: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+
+    ssl_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    ssl_days_remaining: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    ssl_issuer: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+    )
+
+    ssl_tls_version: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+
+    ssl_error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+
+# ==========================================================
+# INCIDENTS
+# ==========================================================
+
+class Incident(Base):
+    __tablename__ = "incidents"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    monitor_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "monitors.id",
+            ondelete="CASCADE",
+        ),
+        index=True,
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    duration_seconds: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    reason: Mapped[str] = mapped_column(
+        Text
+    )
+
+    status: Mapped[IncidentStatus] = mapped_column(
+        String(16),
+        default=IncidentStatus.OPEN,
+        index=True,
+    )
+
+
+# ==========================================================
+# EMAIL PROVIDERS
+# ==========================================================
+
+class EmailProvider(Base):
+    __tablename__ = "email_providers"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(120),
+        unique=True,
+    )
+
+    provider_type: Mapped[ProviderType] = mapped_column(
+        String(32)
+    )
+
+    host: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+    )
+
+    port: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    username: Mapped[str | None] = mapped_column(
+        String(320),
+        nullable=True,
+    )
+
+    encrypted_secret: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    from_email: Mapped[str] = mapped_column(
+        String(320)
+    )
+
+    from_name: Mapped[str] = mapped_column(
+        String(200),
+        default="Novus URL Monitor",
+    )
+
+    tls_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+
+    is_default: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+# ==========================================================
+# ALERT RECIPIENTS
+# ==========================================================
+
+class AlertRecipient(Base):
+    __tablename__ = "alert_recipients"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    email: Mapped[str] = mapped_column(
+        String(320),
+        unique=True,
+    )
+
+    name: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+
+# ==========================================================
+# AUDIT LOG
+# ==========================================================
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    action: Mapped[str] = mapped_column(
+        String(120),
+        index=True,
+    )
+
+    resource_type: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+
+    resource_id: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+
+    ip_address: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+
+    user_agent: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+    )
+
+    metadata_json: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        index=True,
+    )
+============================================================
+FILE: app/models/__init__.py
+============================================================
+from app.models.models import *
+
+============================================================
+FILE: app/db/session.py
+============================================================
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from app.config import get_settings
+
+class Base(DeclarativeBase):
+    pass
+
+engine = create_engine(get_settings().database_url, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+============================================================
+FILE: app/config.py
+============================================================
+from functools import lru_cache
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    app_name: str = "Novus URL Monitor V2"
+    environment: str = "development"
+    host: str = "127.0.0.1"
+    port: int = 8090
+    database_url: str
+    jwt_secret_key: str
+    jwt_algorithm: str = "HS256"
+    access_token_minutes: int = 15
+    refresh_token_days: int = 30
+    secret_encryption_key: str
+    cors_origins: str = "http://127.0.0.1:8090"
+    monitor_default_timeout: int = 10
+    monitor_max_history: int = 100
+    monitor_worker_interval: int = 30
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    @property
+    def cors_origin_list(self):
+        return [x.strip() for x in self.cors_origins.split(",") if x.strip()]
+
+@lru_cache
+def get_settings():
+    return Settings()
+
+============================================================
+FILE: app/core/security.py
+============================================================
+from datetime import datetime, timedelta, timezone
+import hashlib, secrets, jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+from app.config import get_settings
+ph=PasswordHasher(); settings=get_settings()
+def hash_password(password): return ph.hash(password)
+def verify_password(password, password_hash):
+    try: return ph.verify(password_hash,password)
+    except VerifyMismatchError: return False
+def create_access_token(user_id, role):
+    now=datetime.now(timezone.utc)
+    return jwt.encode({"sub":str(user_id),"role":role,"type":"access","iat":now,"exp":now+timedelta(minutes=settings.access_token_minutes),"jti":secrets.token_hex(16)},settings.jwt_secret_key,algorithm=settings.jwt_algorithm)
+def new_refresh_token():
+    raw=secrets.token_urlsafe(48); return raw,hashlib.sha256(raw.encode()).hexdigest()
+def hash_refresh_token(raw): return hashlib.sha256(raw.encode()).hexdigest()
+
+============================================================
+FILE: app/core/deps.py
+============================================================
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+import jwt
+from app.config import get_settings
+from app.db.session import get_db
+from app.models import User, UserRole
+bearer=HTTPBearer(auto_error=False)
+def get_current_user(credentials: HTTPAuthorizationCredentials=Depends(bearer), db: Session=Depends(get_db)):
+    if not credentials: raise HTTPException(401,"Authentication required")
+    try:
+        p=jwt.decode(credentials.credentials,get_settings().jwt_secret_key,algorithms=[get_settings().jwt_algorithm])
+        if p.get("type")!="access": raise ValueError()
+        user=db.get(User,int(p["sub"]))
+    except Exception: raise HTTPException(401,"Invalid or expired token")
+    if not user or not user.is_active: raise HTTPException(401,"User inactive or not found")
+    return user
+def require_roles(*roles):
+    def dep(user=Depends(get_current_user)):
+        if user.role not in roles: raise HTTPException(403,"Insufficient permissions")
+        return user
+    return dep
+
+============================================================
+FILE: app/api/auth.py
+============================================================
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.core.deps import get_current_user
+from app.core.security import (
+    create_access_token,
+    verify_password,
+    new_refresh_token,
+    hash_refresh_token,
+)
+from app.db.session import get_db
+from app.models import User, RefreshToken
+from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
+
+
+router = APIRouter(
+    prefix="/api/auth",
+    tags=["Authentication"],
+)
+
+
+def get_user_role(user: User) -> str:
+    """
+    Return user role as a plain string.
+
+    Supports both:
+    - Enum roles: UserRole.ADMIN
+    - String roles: "ADMIN"
+    """
+    role = user.role
+
+    if hasattr(role, "value"):
+        return role.value
+
+    return str(role)
+
+
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+)
+def login(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    email = payload.email.strip().lower()
+
+    user = db.scalar(
+        select(User).where(User.email == email)
+    )
+
+    if (
+        not user
+        or not user.is_active
+        or not verify_password(
+            payload.password,
+            user.password_hash,
+        )
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    user.last_login_at = now
+
+    raw_refresh_token, refresh_token_hash = new_refresh_token()
+
+    refresh_token = RefreshToken(
+        user_id=user.id,
+        token_hash=refresh_token_hash,
+        expires_at=now
+        + timedelta(
+            days=get_settings().refresh_token_days
+        ),
+    )
+
+    db.add(refresh_token)
+    db.commit()
+
+    role = get_user_role(user)
+
+    return TokenResponse(
+        access_token=create_access_token(
+            user.id,
+            role,
+        ),
+        refresh_token=raw_refresh_token,
+    )
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+)
+def refresh(
+    payload: RefreshRequest,
+    db: Session = Depends(get_db),
+):
+    token_hash = hash_refresh_token(
+        payload.refresh_token
+    )
+
+    token = db.scalar(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash
+        )
+    )
+
+    now = datetime.now(timezone.utc)
+
+    if (
+        not token
+        or token.revoked_at
+        or token.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid refresh token",
+        )
+
+    user = db.get(User, token.user_id)
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=401,
+            detail="User is inactive or does not exist",
+        )
+
+    # Rotate refresh token
+    token.revoked_at = now
+
+    raw_refresh_token, refresh_token_hash = new_refresh_token()
+
+    new_token = RefreshToken(
+        user_id=user.id,
+        token_hash=refresh_token_hash,
+        expires_at=now
+        + timedelta(
+            days=get_settings().refresh_token_days
+        ),
+    )
+
+    db.add(new_token)
+    db.commit()
+
+    role = get_user_role(user)
+
+    return TokenResponse(
+        access_token=create_access_token(
+            user.id,
+            role,
+        ),
+        refresh_token=raw_refresh_token,
+    )
+
+
+@router.get("/me")
+def me(
+    user=Depends(get_current_user),
+):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "role": get_user_role(user),
+        "is_active": user.is_active,
+    }
+============================================================
+FILE: app/api/users.py
+============================================================
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.deps import require_roles
+from app.core.security import hash_password
+from app.db.session import get_db
+from app.models import User, UserRole
+from app.schemas.auth import UserCreate
+
+
+router = APIRouter(
+    prefix="/api/admin/users",
+    tags=["Admin Users"],
+)
+
+
+def role_to_string(role) -> str:
+    """
+    Convert UserRole enum or database string to plain string.
+    """
+    if hasattr(role, "value"):
+        return role.value
+
+    return str(role)
+
+
+def parse_role(role_value) -> UserRole:
+    """
+    Convert incoming role to UserRole safely.
+
+    Supports both enum values and enum names.
+    """
+    if isinstance(role_value, UserRole):
+        return role_value
+
+    value = str(role_value).strip()
+
+    # Try enum value first
+    try:
+        return UserRole(value)
+    except ValueError:
+        pass
+
+    # Try enum name
+    try:
+        return UserRole[value.upper()]
+    except KeyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role: {value}",
+        )
+
+
+@router.post("")
+def create_user(
+    payload: UserCreate,
+    admin=Depends(require_roles(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    email = payload.email.strip().lower()
+
+    # Check duplicate user
+    existing_user = db.scalar(
+        select(User).where(User.email == email)
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail="User already exists",
+        )
+
+    # Validate password
+    if len(payload.password) < 12:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 12 characters",
+        )
+
+    # Convert role safely
+    role = parse_role(payload.role)
+
+    user = User(
+        email=email,
+        password_hash=hash_password(payload.password),
+        role=role,
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "role": role_to_string(user.role),
+        "is_active": user.is_active,
+    }
+
+
+@router.get("")
+def list_users(
+    admin=Depends(require_roles(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    users = db.scalars(
+        select(User).order_by(User.id)
+    ).all()
+
+    return [
+        {
+            "id": user.id,
+            "email": user.email,
+            "role": role_to_string(user.role),
+            "is_active": user.is_active,
+        }
+        for user in users
+    ]
+============================================================
+FILE: app/api/monitors.py
+============================================================
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from app.core.deps import get_current_user, require_roles
+from app.db.session import get_db
+from app.models import Monitor, MonitorCheck, UserRole
+from app.schemas.monitor import MonitorCreate, MonitorResponse
+
+
+router = APIRouter(
+    prefix="/api/monitors",
+    tags=["Monitors"],
+)
+
+
+# ==========================================================
+# CREATE MONITOR
+# ADMIN + URL_MANAGER
+# ==========================================================
+
+@router.post(
+    "",
+    response_model=MonitorResponse,
+)
+def create_monitor(
+    payload: MonitorCreate,
+    user=Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.URL_MANAGER,
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    monitor = Monitor(
+        name=payload.name.strip(),
+        url=str(payload.url),
+        method=payload.method,
+        expected_status=payload.expected_status,
+        timeout_seconds=payload.timeout_seconds,
+        interval_seconds=payload.interval_seconds,
+        is_active=True,
+        ssl_enabled=payload.ssl_enabled,
+        created_by=user.id,
+    )
+
+    db.add(monitor)
+    db.commit()
+    db.refresh(monitor)
+
+    return monitor
+
+
+# ==========================================================
+# LIST MONITORS
+# ADMIN + URL_MANAGER + VIEWER
+# ==========================================================
+
+@router.get(
+    "",
+    response_model=list[MonitorResponse],
+)
+def list_monitors(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return db.scalars(
+        select(Monitor)
+        .order_by(Monitor.id.desc())
+    ).all()
+
+
+# ==========================================================
+# UPDATE MONITOR
+# ADMIN + URL_MANAGER
+# ==========================================================
+
+@router.patch(
+    "/{monitor_id}",
+    response_model=MonitorResponse,
+)
+def update_monitor(
+    monitor_id: int,
+    payload: MonitorCreate,
+    user=Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.URL_MANAGER,
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    monitor = db.get(Monitor, monitor_id)
+
+    if not monitor:
+        raise HTTPException(
+            status_code=404,
+            detail="Monitor not found",
+        )
+
+    monitor.name = payload.name.strip()
+    monitor.url = str(payload.url)
+    monitor.method = payload.method
+    monitor.expected_status = payload.expected_status
+    monitor.timeout_seconds = payload.timeout_seconds
+    monitor.interval_seconds = payload.interval_seconds
+    monitor.ssl_enabled = payload.ssl_enabled
+
+    db.commit()
+    db.refresh(monitor)
+
+    return monitor
+
+
+# ==========================================================
+# ENABLE MONITOR
+# ADMIN + URL_MANAGER
+# ==========================================================
+
+@router.patch(
+    "/{monitor_id}/enable",
+)
+def enable_monitor(
+    monitor_id: int,
+    user=Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.URL_MANAGER,
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    monitor = db.get(Monitor, monitor_id)
+
+    if not monitor:
+        raise HTTPException(
+            status_code=404,
+            detail="Monitor not found",
+        )
+
+    monitor.is_active = True
+
+    db.commit()
+    db.refresh(monitor)
+
+    return {
+        "id": monitor.id,
+        "name": monitor.name,
+        "is_active": monitor.is_active,
+        "message": "Monitor enabled successfully",
+    }
+
+
+# ==========================================================
+# DISABLE MONITOR
+# ADMIN + URL_MANAGER
+# ==========================================================
+
+@router.patch(
+    "/{monitor_id}/disable",
+)
+def disable_monitor(
+    monitor_id: int,
+    user=Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.URL_MANAGER,
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    monitor = db.get(Monitor, monitor_id)
+
+    if not monitor:
+        raise HTTPException(
+            status_code=404,
+            detail="Monitor not found",
+        )
+
+    monitor.is_active = False
+
+    db.commit()
+    db.refresh(monitor)
+
+    return {
+        "id": monitor.id,
+        "name": monitor.name,
+        "is_active": monitor.is_active,
+        "message": "Monitor disabled successfully",
+    }
+
+
+# ==========================================================
+# DELETE MONITOR
+# ADMIN ONLY
+# ==========================================================
+
+@router.delete(
+    "/{monitor_id}",
+)
+def delete_monitor(
+    monitor_id: int,
+    admin=Depends(
+        require_roles(
+            UserRole.ADMIN,
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    monitor = db.get(Monitor, monitor_id)
+
+    if not monitor:
+        raise HTTPException(
+            status_code=404,
+            detail="Monitor not found",
+        )
+
+    # Delete monitor history first
+    db.execute(
+        delete(MonitorCheck).where(
+            MonitorCheck.monitor_id == monitor_id
+        )
+    )
+
+    # Delete monitor
+    db.delete(monitor)
+
+    db.commit()
+
+    return {
+        "message": "Monitor deleted successfully",
+        "id": monitor_id,
+    }
+
+
+# ==========================================================
+# MONITOR HISTORY
+# ADMIN + URL_MANAGER + VIEWER
+# Maximum 100 records returned
+# ==========================================================
+
+@router.get(
+    "/{monitor_id}/history",
+)
+def history(
+    monitor_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    monitor = db.get(Monitor, monitor_id)
+
+    if not monitor:
+        raise HTTPException(
+            status_code=404,
+            detail="Monitor not found",
+        )
+
+    checks = db.scalars(
+        select(MonitorCheck)
+        .where(
+            MonitorCheck.monitor_id == monitor_id
+        )
+        .order_by(
+            MonitorCheck.checked_at.desc(),
+            MonitorCheck.id.desc(),
+        )
+        .limit(100)
+    ).all()
+
+    return [
+        {
+            "id": check.id,
+            "checked_at": check.checked_at,
+            "status": check.status,
+            "http_status": check.http_status,
+            "response_time_ms": check.response_time_ms,
+            "error_message": check.error_message,
+
+            # SSL monitoring
+            "ssl_valid": check.ssl_valid,
+            "ssl_expires_at": check.ssl_expires_at,
+            "ssl_days_remaining": check.ssl_days_remaining,
+            "ssl_issuer": check.ssl_issuer,
+            "ssl_tls_version": check.ssl_tls_version,
+            "ssl_error": check.ssl_error,
+        }
+        for check in checks
+    ]
+============================================================
+FILE: app/api/email_providers.py
+============================================================
+from fastapi import APIRouter,Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from app.core.crypto import encrypt_secret
+from app.core.deps import require_roles
+from app.db.session import get_db
+from app.models import EmailProvider,User,UserRole
+from app.schemas.email import EmailProviderCreate
+router=APIRouter(prefix="/api/admin/email-providers",tags=["Admin Email Providers"])
+@router.post("")
+def create_provider(payload:EmailProviderCreate,admin=Depends(require_roles(UserRole.ADMIN)),db:Session=Depends(get_db)):
+    if payload.is_default:
+        for p in db.scalars(select(EmailProvider)).all(): p.is_default=False
+    p=EmailProvider(name=payload.name,provider_type=payload.provider_type,host=payload.host,port=payload.port,username=payload.username,encrypted_secret=encrypt_secret(payload.secret) if payload.secret else None,from_email=str(payload.from_email),from_name=payload.from_name,tls_enabled=payload.tls_enabled,is_default=payload.is_default); db.add(p); db.commit(); db.refresh(p)
+    return {"id":p.id,"name":p.name,"provider_type":p.provider_type,"from_email":p.from_email,"secret_configured":bool(p.encrypted_secret)}
+@router.get("")
+def list_providers(admin=Depends(require_roles(UserRole.ADMIN)),db:Session=Depends(get_db)):
+    return [{"id":p.id,"name":p.name,"provider_type":p.provider_type,"host":p.host,"port":p.port,"username":p.username,"from_email":p.from_email,"is_active":p.is_active,"is_default":p.is_default,"secret_configured":bool(p.encrypted_secret)} for p in db.scalars(select(EmailProvider).order_by(EmailProvider.id)).all()]
+
+============================================================
+FILE: app/schemas/auth.py
+============================================================
+from pydantic import BaseModel, EmailStr, Field
+class LoginRequest(BaseModel): email: EmailStr; password: str=Field(min_length=8,max_length=256)
+class TokenResponse(BaseModel): access_token: str; token_type: str="bearer"
+class RefreshRequest(BaseModel): refresh_token: str
+class UserCreate(BaseModel): email: EmailStr; password: str=Field(min_length=12,max_length=256); role: str="VIEWER"
+
+============================================================
+FILE: app/schemas/monitor.py
+============================================================
+from pydantic import BaseModel, Field, HttpUrl
+
+
+class MonitorCreate(BaseModel):
+    name: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+    url: HttpUrl
+
+    method: str = Field(
+        default="GET",
+        pattern="^(GET|HEAD)$",
+    )
+
+    expected_status: int = Field(
+        default=200,
+        ge=100,
+        le=599,
+    )
+
+    timeout_seconds: int = Field(
+        default=10,
+        ge=1,
+        le=120,
+    )
+
+    interval_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=86400,
+    )
+
+    ssl_enabled: bool = True
+
+
+class MonitorResponse(BaseModel):
+    id: int
+    name: str
+    url: str
+    status: str
+    expected_status: int
+    is_active: bool
+    ssl_enabled: bool
+
+    class Config:
+        from_attributes = True
+============================================================
+FILE: app/schemas/email_provider.py
+============================================================
+FILE NOT FOUND
+
+============================================================
+FILE: app/services/monitoring.py
+============================================================
+import socket
+import ssl
+import time
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+
+import httpx
+from sqlalchemy.orm import Session
+
+from app.models import Monitor, MonitorCheck, MonitorStatus
+from app.services.history import enforce_history_limit
+
+
+# ==========================================================
+# SSL DEFAULT RESULT
+# ==========================================================
+
+def empty_ssl_result() -> dict:
+    return {
+        "ssl_valid": None,
+        "ssl_expires_at": None,
+        "ssl_days_remaining": None,
+        "ssl_issuer": None,
+        "ssl_tls_version": None,
+        "ssl_error": None,
+    }
+
+
+# ==========================================================
+# SSL CERTIFICATE CHECK
+# ==========================================================
+
+def get_ssl_certificate_info(
+    url: str,
+    timeout: int = 10,
+) -> dict:
+    """
+    Check HTTPS certificate using a real TLS handshake.
+
+    Returns:
+        ssl_valid
+        ssl_expires_at
+        ssl_days_remaining
+        ssl_issuer
+        ssl_tls_version
+        ssl_error
+
+    HTTP URLs return NULL SSL values because SSL
+    monitoring is not applicable.
+    """
+
+    result = empty_ssl_result()
+
+    parsed = urlparse(url)
+
+    # ------------------------------------------------------
+    # HTTP / non-HTTPS
+    # ------------------------------------------------------
+
+    if parsed.scheme.lower() != "https":
+        return result
+
+    hostname = parsed.hostname
+
+    if not hostname:
+        result["ssl_valid"] = False
+        result["ssl_error"] = "Invalid HTTPS hostname"
+        return result
+
+    port = parsed.port or 443
+
+    raw_socket = None
+    tls_socket = None
+
+    try:
+        # --------------------------------------------------
+        # Secure default SSL context
+        #
+        # Certificate validation:
+        # - CA verification
+        # - hostname verification
+        # - secure TLS defaults
+        # --------------------------------------------------
+
+        context = ssl.create_default_context()
+
+        # --------------------------------------------------
+        # TCP connection
+        # --------------------------------------------------
+
+        raw_socket = socket.create_connection(
+            (hostname, port),
+            timeout=timeout,
+        )
+
+        # --------------------------------------------------
+        # TLS handshake with SNI
+        # --------------------------------------------------
+
+        tls_socket = context.wrap_socket(
+            raw_socket,
+            server_hostname=hostname,
+        )
+
+        certificate = tls_socket.getpeercert()
+
+        if not certificate:
+            raise ssl.SSLError(
+                "No TLS certificate received"
+            )
+
+        # --------------------------------------------------
+        # TLS VERSION
+        # --------------------------------------------------
+
+        tls_version = tls_socket.version()
+
+        result["ssl_tls_version"] = tls_version
+
+        # --------------------------------------------------
+        # CERTIFICATE EXPIRY
+        # --------------------------------------------------
+
+        expires_string = certificate.get("notAfter")
+
+        if expires_string:
+            expires_at = datetime.strptime(
+                expires_string,
+                "%b %d %H:%M:%S %Y %Z",
+            ).replace(
+                tzinfo=timezone.utc,
+            )
+
+            now = datetime.now(timezone.utc)
+
+            seconds_remaining = (
+                expires_at - now
+            ).total_seconds()
+
+            days_remaining = int(
+                seconds_remaining // 86400
+            )
+
+            result["ssl_expires_at"] = expires_at
+            result["ssl_days_remaining"] = days_remaining
+
+        # --------------------------------------------------
+        # ISSUER
+        # --------------------------------------------------
+
+        issuer_parts = certificate.get(
+            "issuer",
+            (),
+        )
+
+        issuer_values = []
+
+        for section in issuer_parts:
+            for key, value in section:
+                issuer_values.append(
+                    f"{key}={value}"
+                )
+
+        issuer = ", ".join(
+            issuer_values
+        )
+
+        if issuer:
+            result["ssl_issuer"] = issuer[:512]
+
+        # --------------------------------------------------
+        # CERTIFICATE IS VALID
+        #
+        # create_default_context() already validated:
+        # - certificate chain
+        # - CA trust
+        # - hostname
+        # --------------------------------------------------
+
+        result["ssl_valid"] = True
+        result["ssl_error"] = None
+
+        return result
+
+    except ssl.CertificateError as exc:
+        result["ssl_valid"] = False
+        result["ssl_error"] = (
+            f"Certificate validation failed: {str(exc)}"
+        )[:2000]
+
+        return result
+
+    except ssl.SSLError as exc:
+        result["ssl_valid"] = False
+        result["ssl_error"] = (
+            f"TLS/SSL error: {str(exc)}"
+        )[:2000]
+
+        return result
+
+    except socket.timeout:
+        result["ssl_valid"] = False
+        result["ssl_error"] = (
+            "SSL connection timed out"
+        )
+
+        return result
+
+    except OSError as exc:
+        result["ssl_valid"] = False
+        result["ssl_error"] = (
+            f"SSL connection error: {str(exc)}"
+        )[:2000]
+
+        return result
+
+    except Exception as exc:
+        result["ssl_valid"] = False
+        result["ssl_error"] = (
+            f"SSL check failed: {str(exc)}"
+        )[:2000]
+
+        return result
+
+    finally:
+        # --------------------------------------------------
+        # Close TLS/TCP sockets safely
+        # --------------------------------------------------
+
+        if tls_socket is not None:
+            try:
+                tls_socket.close()
+            except Exception:
+                pass
+
+        elif raw_socket is not None:
+            try:
+                raw_socket.close()
+            except Exception:
+                pass
+
+
+# ==========================================================
+# MONITOR CHECK
+# ==========================================================
+
+def check_monitor(
+    db: Session,
+    monitor: Monitor,
+    history_limit: int = 100,
+):
+    """
+    Perform one complete monitor check.
+
+    Checks:
+        1. HTTP/HTTPS availability
+        2. Expected HTTP status
+        3. Response time
+        4. SSL certificate when enabled
+        5. SSL certificate expiry
+        6. TLS version
+        7. SSL issuer
+
+    Stores exactly one MonitorCheck record.
+
+    History is limited to the latest `history_limit`
+    records per monitor.
+    """
+
+    started = time.perf_counter()
+
+    status = MonitorStatus.DOWN
+
+    http_status = None
+
+    error = None
+
+    # ======================================================
+    # SSL DEFAULT DATA
+    # ======================================================
+
+    ssl_data = empty_ssl_result()
+
+    # ======================================================
+    # HTTP CHECK
+    # ======================================================
+
+    try:
+        with httpx.Client(
+            timeout=monitor.timeout_seconds,
+            follow_redirects=True,
+        ) as client:
+
+            response = client.request(
+                monitor.method,
+                monitor.url,
+            )
+
+            http_status = response.status_code
+
+            # ------------------------------------------------
+            # Expected HTTP status
+            # ------------------------------------------------
+
+            if (
+                response.status_code
+                == monitor.expected_status
+            ):
+                status = MonitorStatus.UP
+
+            else:
+                error = (
+                    f"Expected HTTP "
+                    f"{monitor.expected_status}, "
+                    f"got {response.status_code}"
+                )
+
+    except httpx.TimeoutException:
+        error = "HTTP request timed out"
+
+    except httpx.ConnectError as exc:
+        error = (
+            f"HTTP connection failed: {str(exc)}"
+        )[:2000]
+
+    except httpx.RequestError as exc:
+        error = (
+            f"HTTP request failed: {str(exc)}"
+        )[:2000]
+
+    except Exception as exc:
+        error = str(exc)[:2000]
+
+    # ======================================================
+    # SSL CHECK
+    # ======================================================
+
+    if (
+        monitor.ssl_enabled
+        and monitor.url.lower().startswith("https://")
+    ):
+        ssl_data = get_ssl_certificate_info(
+            monitor.url,
+            timeout=monitor.timeout_seconds,
+        )
+
+        # --------------------------------------------------
+        # SSL failure makes monitor DOWN
+        # --------------------------------------------------
+
+        if ssl_data["ssl_valid"] is not True:
+
+            status = MonitorStatus.DOWN
+
+            ssl_error = ssl_data["ssl_error"]
+
+            if ssl_error:
+
+                if error:
+                    error = (
+                        f"{error}; "
+                        f"SSL: {ssl_error}"
+                    )
+                else:
+                    error = (
+                        f"SSL: {ssl_error}"
+                    )
+
+    # ======================================================
+    # RESPONSE TIME
+    # ======================================================
+
+    response_time_ms = int(
+        (
+            time.perf_counter()
+            - started
+        ) * 1000
+    )
+
+    # ======================================================
+    # CREATE HISTORY RECORD
+    # ======================================================
+
+    check = MonitorCheck(
+        monitor_id=monitor.id,
+
+        status=status,
+
+        http_status=http_status,
+
+        response_time_ms=response_time_ms,
+
+        error_message=error,
+
+        # --------------------------------------------------
+        # SSL DATA
+        # --------------------------------------------------
+
+        ssl_valid=ssl_data["ssl_valid"],
+
+        ssl_expires_at=ssl_data[
+            "ssl_expires_at"
+        ],
+
+        ssl_days_remaining=ssl_data[
+            "ssl_days_remaining"
+        ],
+
+        ssl_issuer=ssl_data[
+            "ssl_issuer"
+        ],
+
+        ssl_tls_version=ssl_data[
+            "ssl_tls_version"
+        ],
+
+        ssl_error=ssl_data[
+            "ssl_error"
+        ],
+    )
+
+    db.add(check)
+
+    # ======================================================
+    # UPDATE CURRENT MONITOR STATUS
+    # ======================================================
+
+    monitor.status = status
+
+    db.commit()
+
+    db.refresh(check)
+
+    # ======================================================
+    # KEEP ONLY LATEST 100 RECORDS
+    # ======================================================
+
+    enforce_history_limit(
+        db,
+        monitor.id,
+        history_limit,
+    )
+
+    return check
+============================================================
+FILE: app/services/history.py
+============================================================
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from app.models import MonitorCheck
+
+
+def enforce_history_limit(
+    db: Session,
+    monitor_id: int,
+    limit: int = 100,
+):
+    if limit < 1:
+        raise ValueError(
+            "History limit must be greater than zero"
+        )
+
+    ids = db.scalars(
+        select(MonitorCheck.id)
+        .where(
+            MonitorCheck.monitor_id == monitor_id
+        )
+        .order_by(
+            MonitorCheck.checked_at.desc(),
+            MonitorCheck.id.desc(),
+        )
+        .offset(limit)
+    ).all()
+
+    if not ids:
+        return
+
+    db.execute(
+        delete(MonitorCheck).where(
+            MonitorCheck.id.in_(ids)
+        )
+    )
+
+    db.commit()
+============================================================
+FILE: app/workers/monitor_worker.py
+============================================================
+import logging
+import time
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+
+from app.db.session import SessionLocal
+from app.models import Monitor
+from app.services.monitoring import check_monitor
+
+
+# ==========================================================
+# LOGGING
+# ==========================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+logger = logging.getLogger(
+    "novus-monitor-worker"
+)
+
+
+# ==========================================================
+# WORKER SETTINGS
+# ==========================================================
+
+DEFAULT_POLL_SECONDS = 5
+HISTORY_LIMIT = 100
+
+
+# ==========================================================
+# MONITOR WORKER
+# ==========================================================
+
+def run_worker():
+    """
+    Continuous monitoring worker.
+
+    The worker checks active monitors according to
+    their interval_seconds setting.
+    """
+
+    logger.info(
+        "Novus URL Monitor worker started"
+    )
+
+    last_checked: dict[int, float] = {}
+
+    while True:
+
+        try:
+            now = time.monotonic()
+
+            db = SessionLocal()
+
+            try:
+
+                monitors = db.scalars(
+                    select(Monitor)
+                    .where(
+                        Monitor.is_active.is_(True)
+                    )
+                    .order_by(Monitor.id)
+                ).all()
+
+                for monitor in monitors:
+
+                    last_run = last_checked.get(
+                        monitor.id
+                    )
+
+                    # ------------------------------------------
+                    # Check interval
+                    # ------------------------------------------
+
+                    if last_run is not None:
+
+                        elapsed = (
+                            now - last_run
+                        )
+
+                        if elapsed < monitor.interval_seconds:
+                            continue
+
+                    # ------------------------------------------
+                    # Mark execution time BEFORE check
+                    #
+                    # Prevents rapid repeated execution if
+                    # check itself takes some time.
+                    # ------------------------------------------
+
+                    last_checked[
+                        monitor.id
+                    ] = now
+
+                    logger.info(
+                        "Checking monitor id=%s name=%s url=%s",
+                        monitor.id,
+                        monitor.name,
+                        monitor.url,
+                    )
+
+                    # ------------------------------------------
+                    # Execute HTTP + SSL check
+                    # ------------------------------------------
+
+                    try:
+
+                        check = check_monitor(
+                            db=db,
+                            monitor=monitor,
+                            history_limit=HISTORY_LIMIT,
+                        )
+
+                        logger.info(
+                            "Monitor id=%s status=%s "
+                            "http_status=%s "
+                            "ssl_valid=%s "
+                            "response_time=%sms",
+                            monitor.id,
+                            check.status,
+                            check.http_status,
+                            check.ssl_valid,
+                            check.response_time_ms,
+                        )
+
+                    except Exception:
+                        logger.exception(
+                            "Monitor check failed "
+                            "id=%s name=%s",
+                            monitor.id,
+                            monitor.name,
+                        )
+
+                        # --------------------------------------
+                        # Rollback failed transaction
+                        # --------------------------------------
+
+                        db.rollback()
+
+            finally:
+                db.close()
+
+            # ----------------------------------------------
+            # Remove deleted monitors from scheduler cache
+            # ----------------------------------------------
+
+            active_ids = {
+                monitor.id
+                for monitor in monitors
+            }
+
+            last_checked = {
+                monitor_id: timestamp
+                for monitor_id, timestamp
+                in last_checked.items()
+                if monitor_id in active_ids
+            }
+
+        except Exception:
+            logger.exception(
+                "Monitoring worker loop error"
+            )
+
+        # ==================================================
+        # Small polling interval
+        # ==================================================
+
+        time.sleep(
+            DEFAULT_POLL_SECONDS
+        )
+
+
+# ==========================================================
+# ENTRY POINT
+# ==========================================================
+
+if __name__ == "__main__":
+    try:
+        run_worker()
+
+    except KeyboardInterrupt:
+        logger.info(
+            "Novus URL Monitor worker stopped"
+        )
+============================================================
+FILE: app/main.py
+============================================================
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.config import get_settings
+from app.api import auth,users,monitors,email_providers
+s=get_settings()
+app=FastAPI(title=s.app_name,version="2.0.0-dev")
+app.add_middleware(CORSMiddleware,allow_origins=s.cors_origin_list,allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
+app.include_router(auth.router); app.include_router(users.router); app.include_router(monitors.router); app.include_router(email_providers.router)
+@app.get("/health")
+def health(): return {"status":"ok","version":"2.0.0-dev"}
+
+============================================================
+FILE: alembic/env.py
+============================================================
+from logging.config import fileConfig
+
+from sqlalchemy import engine_from_config, pool
+from alembic import context
+
+from app.db.session import Base
+import app.models
+
+
+config = context.config
+
+# Only load logging configuration if the required
+# logging sections exist in alembic.ini.
+if config.config_file_name:
+    try:
+        fileConfig(
+            config.config_file_name,
+            disable_existing_loggers=False,
+        )
+    except KeyError:
+        # Current alembic.ini intentionally does not contain
+        # the standard logging sections.
+        pass
+
+
+target_metadata = Base.metadata
+
+
+def run_migrations_offline():
+    url = config.get_main_option(
+        "sqlalchemy.url"
+    )
+
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_type=True,
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online():
+
+    section = config.get_section(
+        config.config_ini_section
+    )
+
+    connectable = engine_from_config(
+        section,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+============================================================
+FILE: alembic.ini
+============================================================
+[alembic]
+script_location = alembic
+sqlalchemy.url = postgresql+psycopg://novus:tech@127.0.0.1:5432/novus_monitor
