@@ -17,6 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
+  # ==========================================
+  # BUILD
+  # ==========================================
   build:
     name: Build Frontend
     runs-on: ubuntu-latest
@@ -26,6 +30,7 @@ jobs:
         working-directory: frontend
 
     steps:
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -59,16 +64,18 @@ jobs:
           retention-days: 7
 
 
+  # ==========================================
+  # DEPLOY
+  # ==========================================
   deploy:
     name: Deploy Frontend
     needs: build
 
-    # IMPORTANT:
-    # This runner must be installed on the production server
-    # and must run as the novus user.
-    runs-on: self-hosted
+    # Production server par configured self-hosted runner
+    runs-on: [self-hosted, linux, x64]
 
     steps:
+
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
         with:
@@ -83,62 +90,78 @@ jobs:
           FRONTEND_DIR="/home/novus/novus-platform/frontend"
           DIST_DIR="$FRONTEND_DIR/dist"
           TEMP_DIR="/tmp/novus-frontend-deploy"
+          NEW_DIST="$FRONTEND_DIR/.dist-new"
 
           echo "======================================"
-          echo "Starting frontend deployment"
+          echo "NOVUS FRONTEND DEPLOYMENT"
           echo "======================================"
 
           echo "Deployment user:"
           whoami
 
+          if [ "$(whoami)" != "novus" ]; then
+            echo "ERROR: Runner must run as novus user"
+            exit 1
+          fi
+
+          echo ""
           echo "Checking frontend directory..."
+
           test -d "$FRONTEND_DIR"
 
-          echo "Checking downloaded build..."
+          echo "Frontend directory:"
+          ls -ld "$FRONTEND_DIR"
+
+          echo ""
+          echo "Checking downloaded artifact..."
+
           test -f "$TEMP_DIR/index.html"
           test -d "$TEMP_DIR/assets"
 
-          echo "Checking current ownership..."
-          ls -ld "$FRONTEND_DIR"
-          ls -ld "$DIST_DIR" 2>/dev/null || true
+          echo "Artifact verified successfully"
 
-          echo "Creating temporary deployment directory..."
-
-          NEW_DIST="${FRONTEND_DIR}/.dist-new"
+          echo ""
+          echo "Preparing new dist directory..."
 
           rm -rf "$NEW_DIST"
           mkdir -p "$NEW_DIST"
 
-          echo "Copying new frontend files..."
+          echo ""
+          echo "Copying new frontend build..."
 
           cp -a "$TEMP_DIR"/. "$NEW_DIST"/
 
-          echo "Verifying new frontend..."
+          echo ""
+          echo "Verifying new deployment..."
 
           test -f "$NEW_DIST/index.html"
           test -d "$NEW_DIST/assets"
 
-          echo "Setting ownership..."
+          echo ""
+          echo "New frontend files:"
 
-          chown -R novus:novus "$NEW_DIST"
+          find "$NEW_DIST" -maxdepth 2 -type f | head -30
 
-          echo "Replacing frontend dist..."
+          echo ""
+          echo "Replacing current dist..."
 
           rm -rf "$DIST_DIR"
           mv "$NEW_DIST" "$DIST_DIR"
 
-          echo "Final ownership:"
+          echo ""
+          echo "Final deployment directory:"
+
           ls -ld "$DIST_DIR"
           ls -l "$DIST_DIR/index.html"
 
-          echo "======================================"
-          echo "Testing Nginx response"
-          echo "======================================"
+          echo ""
+          echo "Testing local frontend..."
 
           curl -fsSI \
             -H "Host: novus-alert.yashdevops.com" \
             http://127.0.0.1/
 
+          echo ""
           echo "======================================"
-          echo "Frontend deployment completed"
+          echo "FRONTEND DEPLOYMENT SUCCESSFUL"
           echo "======================================"
