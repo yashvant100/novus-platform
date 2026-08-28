@@ -5,7 +5,7 @@ import axios, {
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
-  "https://novus-api.yashdevops.com";
+  "https://novus-alert.yashdevops.com";
 
 const ACCESS_TOKEN_KEY = "novus_access_token";
 
