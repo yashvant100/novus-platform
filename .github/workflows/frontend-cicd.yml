@@ -9,6 +9,9 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build Frontend
@@ -36,4 +39,79 @@ jobs:
         run: npm run build
 
       - name: Verify build
-        run: test -f dist/index.html
+        run: |
+          test -f dist/index.html
+          test -d dist/assets
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  deploy:
+    name: Deploy Frontend
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+
+      - name: Upload frontend to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "dist/*"
+          target: "/home/novus/novus-platform/frontend"
+
+      - name: Fix frontend deployment
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+
+            FRONTEND_DIR="/home/novus/novus-platform/frontend"
+
+            echo "======================================"
+            echo "Starting frontend deployment"
+            echo "======================================"
+
+            cd "$FRONTEND_DIR"
+
+            echo "Checking deployed files..."
+
+            test -f dist/index.html
+            test -d dist/assets
+
+            echo "Fixing ownership..."
+
+            chown -R novus:novus "$FRONTEND_DIR/dist"
+
+            echo "Testing nginx configuration..."
+
+            nginx -t
+
+            echo "Reloading nginx..."
+
+            systemctl reload nginx
+
+            echo "Testing frontend locally..."
+
+            curl -fsSI \
+              -H "Host: novus-alert.yashdevops.com" \
+              http://127.0.0.1/
+
+            echo "======================================"
+            echo "Frontend deployment completed"
+            echo "======================================"

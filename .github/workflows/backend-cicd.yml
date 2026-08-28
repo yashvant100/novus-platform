@@ -9,8 +9,11 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  test:
     name: Validate Backend
     runs-on: ubuntu-latest
 
@@ -26,6 +29,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: novus-url-monitor-v2/requirements.txt
 
       - name: Install dependencies
         run: |
@@ -39,3 +44,63 @@ jobs:
       - name: Run tests
         run: |
           pytest -q
+
+  deploy:
+    name: Deploy Backend
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+
+            APP_DIR="/home/novus/novus-platform/novus-url-monitor-v2"
+
+            echo "======================================"
+            echo "Starting backend deployment"
+            echo "======================================"
+
+            cd /home/novus/novus-platform
+
+            echo "Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            cd "$APP_DIR"
+
+            echo "Checking Python..."
+            python3 --version
+
+            echo "Activating virtual environment..."
+            source venv/bin/activate
+
+            echo "Installing dependencies..."
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+
+            echo "Compiling application..."
+            python -m compileall app
+
+            echo "Restarting backend services..."
+
+            supervisorctl restart novus-url-alert-monitor
+            supervisorctl restart novus-monitor-worker
+
+            echo "Waiting for services..."
+            sleep 5
+
+            echo "Checking backend services..."
+
+            supervisorctl status novus-url-alert-monitor
+            supervisorctl status novus-monitor-worker
+
+            echo "======================================"
+            echo "Backend deployment completed"
+            echo "======================================"
