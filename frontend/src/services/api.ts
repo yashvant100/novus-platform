@@ -5,7 +5,7 @@ import axios, {
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
-  "http://127.0.0.1:8090";
+  "https://novus-api.yashdevops.com";
 
 const ACCESS_TOKEN_KEY = "novus_access_token";
 
