@@ -13,9 +13,9 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Validate Backend
-    runs-on: ubuntu-latest
+  test-and-deploy:
+    name: Test & Deploy Backend
+    runs-on: self-hosted
 
     defaults:
       run:
@@ -25,82 +25,86 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: novus-url-monitor-v2/requirements.txt
+      - name: Check Python
+        run: |
+          python3 --version
+
+      - name: Activate virtual environment
+        run: |
+          test -f venv/bin/activate
+          source venv/bin/activate
+          python --version
 
       - name: Install dependencies
         run: |
+          source venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Compile Python files
         run: |
+          source venv/bin/activate
           python -m compileall app
 
       - name: Run tests
         run: |
+          source venv/bin/activate
           pytest -q
 
-  deploy:
-    name: Deploy Backend
-    needs: test
-    runs-on: ubuntu-latest
+      - name: Deploy backend
+        run: |
+          set -e
 
-    steps:
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script_stop: true
-          script: |
-            set -e
+          SOURCE_DIR="$GITHUB_WORKSPACE/novus-url-monitor-v2"
+          DEPLOY_DIR="/home/novus/novus-platform/novus-url-monitor-v2"
 
-            APP_DIR="/home/novus/novus-platform/novus-url-monitor-v2"
+          echo "======================================"
+          echo "Deploying backend"
+          echo "======================================"
 
-            echo "======================================"
-            echo "Starting backend deployment"
-            echo "======================================"
+          echo "Checking source..."
 
-            cd /home/novus/novus-platform
+          test -d "$SOURCE_DIR/app"
+          test -f "$SOURCE_DIR/requirements.txt"
 
-            echo "Pulling latest code..."
-            git fetch origin main
-            git reset --hard origin/main
+          echo "Syncing application files..."
 
-            cd "$APP_DIR"
+          rsync -a \
+            --exclude "venv/" \
+            --exclude ".env" \
+            --exclude "__pycache__/" \
+            --exclude "*.pyc" \
+            "$SOURCE_DIR/" \
+            "$DEPLOY_DIR/"
 
-            echo "Checking Python..."
-            python3 --version
+          echo "Activating production virtual environment..."
 
-            echo "Activating virtual environment..."
-            source venv/bin/activate
+          cd "$DEPLOY_DIR"
 
-            echo "Installing dependencies..."
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
+          source venv/bin/activate
 
-            echo "Compiling application..."
-            python -m compileall app
+          echo "Installing production dependencies..."
 
-            echo "Restarting backend services..."
+          python -m pip install -r requirements.txt
 
-            supervisorctl restart novus-url-alert-monitor
-            supervisorctl restart novus-monitor-worker
+          echo "Compiling application..."
 
-            echo "Waiting for services..."
-            sleep 5
+          python -m compileall app
 
-            echo "Checking backend services..."
+          echo "Restarting backend services..."
 
-            supervisorctl status novus-url-alert-monitor
-            supervisorctl status novus-monitor-worker
+          supervisorctl restart novus-url-alert-monitor
+          supervisorctl restart novus-monitor-worker
 
-            echo "======================================"
-            echo "Backend deployment completed"
-            echo "======================================"
+          echo "Waiting for services..."
+
+          sleep 5
+
+          echo "Checking backend services..."
+
+          supervisorctl status novus-url-alert-monitor
+          supervisorctl status novus-monitor-worker
+
+          echo "======================================"
+          echo "Backend deployment completed"
+          echo "======================================"
