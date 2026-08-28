@@ -1,15 +1,19 @@
+import sys
+from pathlib import Path
 from logging.config import fileConfig
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
+from app.config import get_settings
 from app.db.session import Base
 import app.models
 
+
 config = context.config
 
-# The current alembic.ini does not contain Alembic's standard logging
-# sections, so do not let fileConfig prevent migrations from running.
 if config.config_file_name:
     try:
         fileConfig(
@@ -19,14 +23,15 @@ if config.config_file_name:
     except (KeyError, ValueError):
         pass
 
+
 target_metadata = Base.metadata
 
 
 def run_migrations_offline():
-    url = config.get_main_option("sqlalchemy.url")
+    settings = get_settings()
 
     context.configure(
-        url=url,
+        url=settings.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
@@ -37,10 +42,12 @@ def run_migrations_offline():
 
 
 def run_migrations_online():
-    section = config.get_section(config.config_ini_section)
+    settings = get_settings()
 
     connectable = engine_from_config(
-        section,
+        {
+            "sqlalchemy.url": settings.database_url,
+        },
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
