@@ -1404,9 +1404,11 @@ function DashboardPage({
 
   return (
     <>
-      <div className="mb-7">
-        <div className="text-sm theme-text-muted">
+      <div className="dashboard-hero mb-7">
+        <div className="flex flex-wrap items-center gap-2 text-sm theme-text-muted">
+          <span className="live-dot" />
           Real-time infrastructure overview
+          <span className="live-chip">Live sync</span>
         </div>
 
         <div className="mt-1 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
@@ -3406,7 +3408,7 @@ function StatCard({
   };
 
   return (
-    <div className="rounded-2xl border theme-border theme-surface p-5">
+    <div className="metric-card rounded-2xl border theme-border theme-surface p-5">
       <div className="flex items-start justify-between">
         <div>
           <div className="text-xs font-medium theme-text-muted">

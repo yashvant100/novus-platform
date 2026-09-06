@@ -99,6 +99,61 @@ body {
 
 body {
   min-width: 320px;
+  background-image:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 28rem),
+    radial-gradient(circle at 92% 12%, color-mix(in srgb, var(--success) 5%, transparent), transparent 24rem);
+}
+
+.dashboard-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  border-radius: 1.25rem;
+  padding: 1.25rem 1.35rem;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, transparent), color-mix(in srgb, var(--primary) 5%, var(--surface)));
+  box-shadow: 0 18px 45px color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.dashboard-hero::after {
+  position: absolute;
+  right: -3rem;
+  top: -4rem;
+  width: 12rem;
+  height: 12rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+  border-radius: 999px;
+  content: "";
+  pointer-events: none;
+}
+
+.live-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--success);
+  box-shadow: 0 0 0 4px var(--success-soft);
+}
+
+.live-chip {
+  border: 1px solid color-mix(in srgb, var(--success) 25%, transparent);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  color: var(--success);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metric-card {
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.metric-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--text) 8%, transparent);
+  transform: translateY(-2px);
 }
 
 button,
