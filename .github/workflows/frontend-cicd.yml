@@ -31,9 +31,15 @@ jobs:
 
     steps:
 
+      # ----------------------------------------
+      # CHECKOUT
+      # ----------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ----------------------------------------
+      # NODE
+      # ----------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -41,21 +47,76 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # ----------------------------------------
+      # INSTALL
+      # ----------------------------------------
       - name: Install dependencies
-        run: npm ci
+        run: |
+          set -e
 
+          echo "======================================"
+          echo "INSTALLING FRONTEND DEPENDENCIES"
+          echo "======================================"
+
+          npm ci
+
+          echo "Dependencies installed successfully"
+
+      # ----------------------------------------
+      # BUILD
+      # ----------------------------------------
       - name: Build frontend
-        run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: |
+          set -e
 
+          echo "======================================"
+          echo "BUILDING NOVUS FRONTEND"
+          echo "======================================"
+
+          echo "API Base URL:"
+          echo "$VITE_API_BASE_URL"
+
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "ERROR: VITE_API_BASE_URL is not configured"
+            echo "Add VITE_API_BASE_URL in:"
+            echo "GitHub Repository → Settings → Secrets and variables → Actions → Variables"
+            exit 1
+          fi
+
+          npm run build
+
+          echo "Frontend build completed successfully"
+
+      # ----------------------------------------
+      # VERIFY BUILD
+      # ----------------------------------------
       - name: Verify build
         run: |
           set -e
 
+          echo "======================================"
+          echo "VERIFYING FRONTEND BUILD"
+          echo "======================================"
+
           test -f dist/index.html
           test -d dist/assets
 
+          echo ""
+          echo "Build directory:"
+          ls -lah dist
+
+          echo ""
+          echo "Build assets:"
+          find dist/assets -maxdepth 1 -type f | head -30
+
+          echo ""
           echo "Frontend build verified successfully"
 
+      # ----------------------------------------
+      # UPLOAD ARTIFACT
+      # ----------------------------------------
       - name: Upload frontend artifact
         uses: actions/upload-artifact@v4
         with:
@@ -71,17 +132,25 @@ jobs:
     name: Deploy Frontend
     needs: build
 
-    # Production server par configured self-hosted runner
-    runs-on: [self-hosted, linux, x64]
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
 
     steps:
 
+      # ----------------------------------------
+      # DOWNLOAD ARTIFACT
+      # ----------------------------------------
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: /tmp/novus-frontend-deploy
 
+      # ----------------------------------------
+      # DEPLOY
+      # ----------------------------------------
       - name: Deploy frontend
         shell: bash
         run: |
@@ -96,6 +165,11 @@ jobs:
           echo "NOVUS FRONTEND DEPLOYMENT"
           echo "======================================"
 
+          # ------------------------------------
+          # CHECK USER
+          # ------------------------------------
+
+          echo ""
           echo "Deployment user:"
           whoami
 
@@ -104,21 +178,43 @@ jobs:
             exit 1
           fi
 
+          # ------------------------------------
+          # CHECK FRONTEND DIRECTORY
+          # ------------------------------------
+
           echo ""
           echo "Checking frontend directory..."
 
-          test -d "$FRONTEND_DIR"
+          if [ ! -d "$FRONTEND_DIR" ]; then
+            echo "ERROR: Frontend directory does not exist:"
+            echo "$FRONTEND_DIR"
+            exit 1
+          fi
 
-          echo "Frontend directory:"
           ls -ld "$FRONTEND_DIR"
+
+          # ------------------------------------
+          # CHECK ARTIFACT
+          # ------------------------------------
 
           echo ""
           echo "Checking downloaded artifact..."
 
-          test -f "$TEMP_DIR/index.html"
-          test -d "$TEMP_DIR/assets"
+          if [ ! -f "$TEMP_DIR/index.html" ]; then
+            echo "ERROR: index.html not found"
+            exit 1
+          fi
+
+          if [ ! -d "$TEMP_DIR/assets" ]; then
+            echo "ERROR: assets directory not found"
+            exit 1
+          fi
 
           echo "Artifact verified successfully"
+
+          # ------------------------------------
+          # PREPARE NEW DIST
+          # ------------------------------------
 
           echo ""
           echo "Preparing new dist directory..."
@@ -126,10 +222,18 @@ jobs:
           rm -rf "$NEW_DIST"
           mkdir -p "$NEW_DIST"
 
+          # ------------------------------------
+          # COPY BUILD
+          # ------------------------------------
+
           echo ""
           echo "Copying new frontend build..."
 
           cp -a "$TEMP_DIR"/. "$NEW_DIST"/
+
+          # ------------------------------------
+          # VERIFY NEW BUILD
+          # ------------------------------------
 
           echo ""
           echo "Verifying new deployment..."
@@ -137,29 +241,118 @@ jobs:
           test -f "$NEW_DIST/index.html"
           test -d "$NEW_DIST/assets"
 
+          echo "New deployment verified"
+
+          # ------------------------------------
+          # SHOW FILES
+          # ------------------------------------
+
           echo ""
           echo "New frontend files:"
 
           find "$NEW_DIST" -maxdepth 2 -type f | head -30
 
-          echo ""
-          echo "Replacing current dist..."
+          # ------------------------------------
+          # BACKUP CURRENT DIST
+          # ------------------------------------
 
-          rm -rf "$DIST_DIR"
+          echo ""
+          echo "Preparing deployment..."
+
+          BACKUP_DIST="$FRONTEND_DIR/.dist-backup"
+
+          rm -rf "$BACKUP_DIST"
+
+          if [ -d "$DIST_DIR" ]; then
+            echo "Creating current dist backup..."
+
+            mv "$DIST_DIR" "$BACKUP_DIST"
+          fi
+
+          # ------------------------------------
+          # INSTALL NEW DIST
+          # ------------------------------------
+
+          echo ""
+          echo "Installing new frontend..."
+
           mv "$NEW_DIST" "$DIST_DIR"
+
+          # ------------------------------------
+          # OWNERSHIP
+          # ------------------------------------
+
+          echo ""
+          echo "Fixing frontend ownership..."
+
+          chown -R novus:novus "$DIST_DIR"
+
+          # ------------------------------------
+          # FINAL VERIFICATION
+          # ------------------------------------
 
           echo ""
           echo "Final deployment directory:"
 
           ls -ld "$DIST_DIR"
-          ls -l "$DIST_DIR/index.html"
+
+          echo ""
+          echo "index.html:"
+
+          ls -lh "$DIST_DIR/index.html"
+
+          test -f "$DIST_DIR/index.html"
+          test -d "$DIST_DIR/assets"
+
+          # ------------------------------------
+          # LOCAL HEALTH CHECK
+          # ------------------------------------
 
           echo ""
           echo "Testing local frontend..."
 
-          curl -fsSI \
+          if curl -fsSI \
+            --max-time 15 \
             -H "Host: novus-alert.yashdevops.com" \
-            http://127.0.0.1/
+            http://127.0.0.1/; then
+
+            echo ""
+            echo "Frontend local health check: SUCCESS"
+
+          else
+
+            echo ""
+            echo "Frontend local health check FAILED"
+
+            echo "Restoring previous deployment..."
+
+            rm -rf "$DIST_DIR"
+
+            if [ -d "$BACKUP_DIST" ]; then
+              mv "$BACKUP_DIST" "$DIST_DIR"
+              chown -R novus:novus "$DIST_DIR"
+            fi
+
+            echo "Previous frontend deployment restored"
+
+            exit 1
+          fi
+
+          # ------------------------------------
+          # CLEAN BACKUP
+          # ------------------------------------
+
+          rm -rf "$BACKUP_DIST"
+
+          # ------------------------------------
+          # CLEAN TEMP
+          # ------------------------------------
+
+          rm -rf "$TEMP_DIR"
+
+          # ------------------------------------
+          # SUCCESS
+          # ------------------------------------
 
           echo ""
           echo "======================================"
