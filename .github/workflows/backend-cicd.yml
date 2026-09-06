@@ -121,6 +121,12 @@ jobs:
 
           ./venv/bin/python -m compileall app
 
+          echo "Applying database migrations..."
+
+          ./venv/bin/alembic upgrade head
+
+          echo "Database migrations applied successfully"
+
           echo "Restarting backend services..."
 
           supervisorctl restart novus-url-alert-monitor
