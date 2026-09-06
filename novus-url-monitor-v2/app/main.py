@@ -7,10 +7,12 @@ from app.config import get_settings
 from app.api import auth, users, monitors, email_providers
 
 settings = get_settings()
+is_production = settings.environment.lower() == "production"
 
 app = FastAPI(
     title=settings.app_name,
     version="2.0.0-dev",
+    openapi_url=None if is_production else "/openapi.json",
     docs_url=None,
     redoc_url=None,
 )
@@ -42,13 +44,14 @@ def api_favicon():
     return Response(content=NOVUS_FAVICON, media_type="image/svg+xml")
 
 
-@app.get("/docs", include_in_schema=False)
-def swagger_docs():
-    return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
-        title=f"{settings.app_name} - Swagger UI",
-        swagger_favicon_url="/api/favicon.svg",
-    )
+if not is_production:
+    @app.get("/docs", include_in_schema=False)
+    def swagger_docs():
+        return get_swagger_ui_html(
+            openapi_url="/openapi.json",
+            title=f"{settings.app_name} - Swagger UI",
+            swagger_favicon_url="/api/favicon.svg",
+        )
 
 
 @app.get("/health")
