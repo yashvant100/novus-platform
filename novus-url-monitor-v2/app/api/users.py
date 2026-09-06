@@ -2,13 +2,13 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
 from app.core.security import hash_password
 from app.db.session import get_db
-from app.models import User, UserRole
+from app.models import Monitor, MonitorPermission, User, UserRole
 from app.schemas.auth import UserCreate
 
 
@@ -99,6 +99,10 @@ class UserUpdate(BaseModel):
     )
 
     role: Optional[str] = None
+
+
+class MonitorPermissionUpdate(BaseModel):
+    monitor_ids: list[int] = []
 
 
 # =========================================================
@@ -214,6 +218,49 @@ def get_user(
         )
 
     return serialize_user(user)
+
+
+@router.get("/{user_id}/monitor-permissions")
+def get_monitor_permissions(
+    user_id: int,
+    admin=Depends(require_roles(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    monitor_ids = db.scalars(
+        select(MonitorPermission.monitor_id).where(
+            MonitorPermission.user_id == user_id,
+        )
+    ).all()
+    return {"user_id": user_id, "monitor_ids": list(monitor_ids)}
+
+
+@router.put("/{user_id}/monitor-permissions")
+def update_monitor_permissions(
+    user_id: int,
+    payload: MonitorPermissionUpdate,
+    admin=Depends(require_roles(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    valid_ids = set(db.scalars(select(Monitor.id).where(Monitor.id.in_(payload.monitor_ids))).all())
+    invalid_ids = set(payload.monitor_ids) - valid_ids
+    if invalid_ids:
+        raise HTTPException(status_code=400, detail="One or more monitors do not exist")
+
+    db.execute(delete(MonitorPermission).where(MonitorPermission.user_id == user_id))
+    db.add_all(
+        MonitorPermission(user_id=user_id, monitor_id=monitor_id)
+        for monitor_id in sorted(valid_ids)
+    )
+    db.commit()
+    return {"user_id": user_id, "monitor_ids": sorted(valid_ids)}
 
 
 # =========================================================

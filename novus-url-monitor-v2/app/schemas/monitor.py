@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 
 # ==========================================================
@@ -38,6 +38,9 @@ class MonitorCreate(BaseModel):
         le=86400,
     )
 
+    alert_email: EmailStr | None = None
+    alert_emails: list[EmailStr] = Field(default_factory=list)
+
     ssl_enabled: bool = True
 
 
@@ -63,6 +66,13 @@ class MonitorResponse(BaseModel):
     is_active: bool
 
     ssl_enabled: bool
+
+    alert_email: str | None = None
+    alert_emails: list[str] = Field(default_factory=list)
+    can_edit: bool = False
+    can_delete: bool = False
+    owner_email: str | None = None
+    assigned_user_emails: list[str] = Field(default_factory=list)
 
     # ------------------------------------------------------
     # Latest HTTP Check

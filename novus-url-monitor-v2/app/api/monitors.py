@@ -1,10 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_db
-from app.models import Monitor, MonitorCheck, UserRole
+from app.models import (
+    AlertRecipient,
+    Monitor,
+    MonitorAlertRecipient,
+    MonitorCheck,
+    MonitorPermission,
+    User,
+    UserRole,
+)
 from app.schemas.monitor import MonitorCreate, MonitorResponse
 
 router = APIRouter(
@@ -34,6 +42,49 @@ def get_latest_check(
     ).first()
 
 
+def can_access_monitor(monitor: Monitor, user) -> bool:
+    return user.role == UserRole.ADMIN or monitor.created_by == user.id
+
+
+def can_view_monitor(db: Session, monitor: Monitor, user) -> bool:
+    if user.role == UserRole.ADMIN or monitor.created_by == user.id:
+        return True
+    return db.scalar(
+        select(MonitorPermission.id).where(
+            MonitorPermission.user_id == user.id,
+            MonitorPermission.monitor_id == monitor.id,
+        )
+    ) is not None
+
+
+def require_active_recipients(db: Session, emails: list[str]) -> list[AlertRecipient]:
+    normalized_emails = sorted({str(email).strip().lower() for email in emails if str(email).strip()})
+    if not normalized_emails:
+        raise HTTPException(400, "Select at least one alert recipient")
+
+    recipients = db.scalars(
+        select(AlertRecipient).where(
+            AlertRecipient.email.in_(normalized_emails),
+            AlertRecipient.is_active.is_(True),
+        )
+    ).all()
+    if len(recipients) != len(normalized_emails):
+        raise HTTPException(400, "All selected emails must be active alert recipients")
+
+    return recipients
+
+
+def monitor_recipient_emails(db: Session, monitor_id: int) -> list[str]:
+    return list(
+        db.scalars(
+            select(AlertRecipient.email)
+            .join(MonitorAlertRecipient, MonitorAlertRecipient.recipient_id == AlertRecipient.id)
+            .where(MonitorAlertRecipient.monitor_id == monitor_id)
+            .order_by(AlertRecipient.email)
+        ).all()
+    )
+
+
 # ==========================================================
 # CREATE MONITOR
 # ==========================================================
@@ -52,6 +103,8 @@ def create_monitor(
     ),
     db: Session = Depends(get_db),
 ):
+    selected_emails = payload.alert_emails or ([str(payload.alert_email)] if payload.alert_email else [])
+    recipients = require_active_recipients(db, selected_emails)
     monitor = Monitor(
         name=payload.name.strip(),
         url=str(payload.url),
@@ -59,12 +112,18 @@ def create_monitor(
         expected_status=payload.expected_status,
         timeout_seconds=payload.timeout_seconds,
         interval_seconds=payload.interval_seconds,
+        alert_email=recipients[0].email,
         is_active=True,
         ssl_enabled=payload.ssl_enabled,
         created_by=user.id,
     )
 
     db.add(monitor)
+    db.flush()
+    db.add_all(
+        MonitorAlertRecipient(monitor_id=monitor.id, recipient_id=recipient.id)
+        for recipient in recipients
+    )
     db.commit()
     db.refresh(monitor)
 
@@ -83,10 +142,19 @@ def list_monitors(
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    monitors = db.scalars(
-        select(Monitor)
-        .order_by(Monitor.id.desc())
-    ).all()
+    query = select(Monitor).order_by(Monitor.id.desc())
+    if user.role != UserRole.ADMIN:
+        query = query.where(
+            or_(
+                Monitor.created_by == user.id,
+                Monitor.id.in_(
+                    select(MonitorPermission.monitor_id).where(
+                        MonitorPermission.user_id == user.id,
+                    )
+                ),
+            )
+        )
+    monitors = db.scalars(query).all()
 
     result = []
 
@@ -97,6 +165,21 @@ def list_monitors(
             monitor.id,
         )
 
+        owner_email = None
+        assigned_user_emails = []
+        if user.role == UserRole.ADMIN:
+            owner_email = db.scalar(
+                select(User.email).where(User.id == monitor.created_by)
+            )
+            assigned_user_emails = list(
+                db.scalars(
+                    select(User.email)
+                    .join(MonitorPermission, MonitorPermission.user_id == User.id)
+                    .where(MonitorPermission.monitor_id == monitor.id)
+                    .order_by(User.email)
+                ).all()
+            )
+
         result.append(
             {
                 "id": monitor.id,
@@ -106,6 +189,12 @@ def list_monitors(
                 "expected_status": monitor.expected_status,
                 "is_active": monitor.is_active,
                 "ssl_enabled": monitor.ssl_enabled,
+                "alert_email": monitor.alert_email,
+                "alert_emails": monitor_recipient_emails(db, monitor.id) or ([monitor.alert_email] if monitor.alert_email else []),
+                "can_edit": can_access_monitor(monitor, user),
+                "can_delete": user.role == UserRole.ADMIN,
+                "owner_email": owner_email,
+                "assigned_user_emails": assigned_user_emails,
 
                 # Latest HTTP result
                 "http_status": (
@@ -196,6 +285,9 @@ def update_monitor(
             "Monitor not found",
         )
 
+    if not can_access_monitor(monitor, user):
+        raise HTTPException(403, "You do not have access to this monitor")
+
     monitor.name = payload.name.strip()
     monitor.url = str(payload.url)
     monitor.method = payload.method
@@ -203,6 +295,15 @@ def update_monitor(
     monitor.timeout_seconds = payload.timeout_seconds
     monitor.interval_seconds = payload.interval_seconds
     monitor.ssl_enabled = payload.ssl_enabled
+    if payload.alert_emails or payload.alert_email is not None:
+        selected_emails = payload.alert_emails or [str(payload.alert_email)]
+        recipients = require_active_recipients(db, selected_emails)
+        monitor.alert_email = recipients[0].email
+        db.execute(delete(MonitorAlertRecipient).where(MonitorAlertRecipient.monitor_id == monitor.id))
+        db.add_all(
+            MonitorAlertRecipient(monitor_id=monitor.id, recipient_id=recipient.id)
+            for recipient in recipients
+        )
 
     db.commit()
     db.refresh(monitor)
@@ -234,6 +335,9 @@ def enable_monitor(
             404,
             "Monitor not found",
         )
+
+    if not can_access_monitor(monitor, user):
+        raise HTTPException(403, "You do not have access to this monitor")
 
     monitor.is_active = True
 
@@ -272,6 +376,9 @@ def disable_monitor(
             404,
             "Monitor not found",
         )
+
+    if not can_access_monitor(monitor, user):
+        raise HTTPException(403, "You do not have access to this monitor")
 
     monitor.is_active = False
 
@@ -342,6 +449,9 @@ def history(
             404,
             "Monitor not found",
         )
+
+    if not can_view_monitor(db, monitor, user):
+        raise HTTPException(403, "You do not have access to this monitor")
 
     checks = db.scalars(
         select(MonitorCheck)

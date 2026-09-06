@@ -16,6 +16,7 @@ from app.models import (
     Incident,
     IncidentStatus,
     Monitor,
+    MonitorAlertRecipient,
     MonitorCheck,
     NotificationEvent,
 )
@@ -53,7 +54,31 @@ def get_email_provider(
 
 def get_recipients(
     db: Session,
+    monitor: Monitor,
 ) -> list[str]:
+
+    if monitor.alert_email:
+        recipients = list(
+            db.scalars(
+                select(AlertRecipient.email)
+                .join(MonitorAlertRecipient, MonitorAlertRecipient.recipient_id == AlertRecipient.id)
+                .where(
+                    MonitorAlertRecipient.monitor_id == monitor.id,
+                    AlertRecipient.is_active.is_(True),
+                )
+                .order_by(AlertRecipient.email)
+            ).all()
+        )
+        if recipients:
+            return recipients
+        has_recipient_links = db.scalar(
+            select(MonitorAlertRecipient.id).where(
+                MonitorAlertRecipient.monitor_id == monitor.id,
+            )
+        ) is not None
+        if has_recipient_links:
+            return []
+        return [monitor.alert_email]
 
     return list(
         db.scalars(
@@ -265,6 +290,7 @@ def build_email_html(subject: str, body: str) -> str:
 
 def send_email(
     db: Session,
+    monitor: Monitor,
     subject: str,
     body: str,
 ) -> bool:
@@ -278,7 +304,7 @@ def send_email(
     """
 
     provider = get_email_provider(db)
-    recipients = get_recipients(db)
+    recipients = get_recipients(db, monitor)
 
     if not provider:
         logger.warning(
@@ -431,6 +457,7 @@ def send_once(
     # Send email first
     sent = send_email(
         db,
+        monitor,
         subject,
         body,
     )

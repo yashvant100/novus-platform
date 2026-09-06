@@ -16,7 +16,10 @@ class Settings(BaseSettings):
     refresh_token_days: int = 30
     secret_encryption_key: str
 
-    cors_origins: str = "http://127.0.0.1:8090"
+    cors_origins: str = (
+        "http://127.0.0.1:5173,http://localhost:5173,"
+        "http://127.0.0.1:8090,http://localhost:8090"
+    )
     monitor_default_timeout: int = 10
     monitor_max_history: int = 100
     monitor_worker_interval: int = 30

@@ -3,9 +3,11 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from "axios";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  "https://novus-alert.yashdevops.com";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim();
+
+if (!API_BASE_URL) {
+  throw new Error("VITE_API_BASE_URL is required in the frontend environment.");
+}
 
 const ACCESS_TOKEN_KEY = "novus_access_token";
 
@@ -35,6 +37,12 @@ export interface Monitor {
   expected_status: number;
   is_active: boolean;
   ssl_enabled: boolean;
+  alert_email: string | null;
+  alert_emails: string[];
+  can_edit: boolean;
+  can_delete: boolean;
+  owner_email: string | null;
+  assigned_user_emails: string[];
 
   http_status: number | null;
   response_time_ms: number | null;
@@ -56,6 +64,8 @@ export interface MonitorCreate {
   timeout_seconds?: number;
   interval_seconds?: number;
   ssl_enabled?: boolean;
+  alert_email?: string | null;
+  alert_emails?: string[];
 }
 
 export interface MonitorHistoryItem {
@@ -87,8 +97,9 @@ export interface EmailProvider {
   port: number | null;
   username: string | null;
   from_email: string;
-  from_name: string;
+  from_name?: string;
   tls_enabled: boolean;
+  is_active: boolean;
   is_default: boolean;
 }
 
@@ -113,6 +124,7 @@ export interface EmailRecipient {
   id: number;
   email: string;
   name: string | null;
+  is_active: boolean;
 }
 
 export interface EmailRecipientCreate {
@@ -329,6 +341,29 @@ export async function createEmailProvider(
   return response.data;
 }
 
+export async function updateEmailProvider(
+  providerId: number,
+  data: EmailProviderCreate,
+): Promise<EmailProvider> {
+  const response = await api.patch<EmailProvider>(
+    `/api/admin/email-providers/${providerId}`,
+    data,
+  );
+  return response.data;
+}
+
+export async function enableEmailProvider(providerId: number) {
+  return (await api.patch(`/api/admin/email-providers/${providerId}/enable`)).data;
+}
+
+export async function disableEmailProvider(providerId: number) {
+  return (await api.patch(`/api/admin/email-providers/${providerId}/disable`)).data;
+}
+
+export async function deleteEmailProvider(providerId: number) {
+  return (await api.delete(`/api/admin/email-providers/${providerId}`)).data;
+}
+
 /* =========================================================
    EMAIL RECIPIENTS - LIST
 ========================================================= */
@@ -356,6 +391,29 @@ export async function createEmailRecipient(
   return response.data;
 }
 
+export async function updateEmailRecipient(
+  recipientId: number,
+  data: EmailRecipientCreate,
+): Promise<EmailRecipient> {
+  const response = await api.patch<EmailRecipient>(
+    `/api/admin/email-providers/recipients/${recipientId}`,
+    data,
+  );
+  return response.data;
+}
+
+export async function enableEmailRecipient(recipientId: number) {
+  return (await api.patch(`/api/admin/email-providers/recipients/${recipientId}/enable`)).data;
+}
+
+export async function disableEmailRecipient(recipientId: number) {
+  return (await api.patch(`/api/admin/email-providers/recipients/${recipientId}/disable`)).data;
+}
+
+export async function deleteEmailRecipient(recipientId: number) {
+  return (await api.delete(`/api/admin/email-providers/recipients/${recipientId}`)).data;
+}
+
 export default api;
 /* =========================================================
    ADMIN USERS
@@ -379,6 +437,11 @@ export interface AdminUserUpdate {
   email?: string;
   password?: string;
   role?: string;
+}
+
+export interface MonitorPermissionResponse {
+  user_id: number;
+  monitor_ids: number[];
 }
 
 export async function getAdminUsers(): Promise<AdminUser[]> {
@@ -449,5 +512,25 @@ export async function deleteAdminUser(
     `/api/admin/users/${userId}`,
   );
 
+  return response.data;
+}
+
+export async function getUserMonitorPermissions(
+  userId: number,
+): Promise<MonitorPermissionResponse> {
+  const response = await api.get<MonitorPermissionResponse>(
+    `/api/admin/users/${userId}/monitor-permissions`,
+  );
+  return response.data;
+}
+
+export async function updateUserMonitorPermissions(
+  userId: number,
+  monitorIds: number[],
+): Promise<MonitorPermissionResponse> {
+  const response = await api.put<MonitorPermissionResponse>(
+    `/api/admin/users/${userId}/monitor-permissions`,
+    { monitor_ids: monitorIds },
+  );
   return response.data;
 }

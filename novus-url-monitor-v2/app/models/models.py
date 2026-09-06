@@ -71,6 +71,7 @@ class Monitor(Base):
     expected_status: Mapped[int] = mapped_column(Integer, default=200)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
     interval_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    alert_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     status: Mapped[MonitorStatus] = mapped_column(String(16), default=MonitorStatus.UNKNOWN, index=True)
     ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -81,6 +82,18 @@ class Monitor(Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class MonitorPermission(Base):
+    __tablename__ = "monitor_permissions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "monitor_id", name="uq_monitor_permission"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    monitor_id: Mapped[int] = mapped_column(ForeignKey("monitors.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class MonitorCheck(Base):
@@ -140,6 +153,18 @@ class AlertRecipient(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True)
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MonitorAlertRecipient(Base):
+    __tablename__ = "monitor_alert_recipients"
+    __table_args__ = (
+        UniqueConstraint("monitor_id", "recipient_id", name="uq_monitor_alert_recipient"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    monitor_id: Mapped[int] = mapped_column(ForeignKey("monitors.id", ondelete="CASCADE"), index=True)
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("alert_recipients.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

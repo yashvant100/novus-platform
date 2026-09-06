@@ -5,12 +5,15 @@ import {
   Bell,
   CheckCircle2,
   ChevronRight,
+  ChevronDown,
   Globe2,
+  History,
   LogOut,
   Menu,
   Moon,
   Plus,
   Pencil,
+  Power,
   RefreshCw,
   Search,
   Server,
@@ -32,6 +35,10 @@ import {
 import {
   createEmailProvider,
   createEmailRecipient,
+  deleteEmailProvider,
+  deleteEmailRecipient,
+  disableEmailProvider,
+  disableEmailRecipient,
   createMonitor,
   deleteMonitor,
   disableMonitor,
@@ -41,16 +48,22 @@ import {
   getAdminUsers,
   createAdminUser,
   updateAdminUser,
+  getUserMonitorPermissions,
   enableAdminUser,
   disableAdminUser,
   deleteAdminUser,
   getEmailProviders,
   getEmailRecipients,
+  enableEmailProvider,
+  enableEmailRecipient,
   getMonitorHistory,
   getMonitors,
   login,
   setAccessToken,
   updateMonitor,
+  updateEmailProvider,
+  updateEmailRecipient,
+  updateUserMonitorPermissions,
   type EmailProvider,
   type EmailProviderCreate,
   type EmailRecipient,
@@ -73,7 +86,7 @@ type Page =
   | "Dashboard"
   | "Monitors"
   | "Incidents"
-  | "Alert Monitoring"
+  | "Monitoring"
   | "Alerts"
   | "Email Providers"
   | "Recipients"
@@ -90,6 +103,7 @@ type FormState = {
   timeout_seconds: number;
   interval_seconds: number;
   ssl_enabled: boolean;
+  alert_emails: string[];
 
   // Optional fields supported if the backend starts returning them.
   status_code?: number | null;
@@ -108,6 +122,7 @@ const emptyForm: FormState = {
   timeout_seconds: 10,
   interval_seconds: 60,
   ssl_enabled: true,
+  alert_emails: [],
 };
 
 function normalizeStatusCode(value: unknown): number | null {
@@ -183,6 +198,10 @@ function App() {
   const [userError, setUserError] = useState("");
   const [showUserForm, setShowUserForm] = useState(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [permissionUser, setPermissionUser] = useState<AdminUser | null>(null);
+  const [permissionMonitorIds, setPermissionMonitorIds] = useState<number[]>([]);
+  const [permissionLoading, setPermissionLoading] = useState(false);
+  const [permissionSaving, setPermissionSaving] = useState(false);
   const [userForm, setUserForm] = useState({
     email: "",
     password: "",
@@ -236,8 +255,9 @@ function App() {
       setUser(currentUser);
       setToken(savedToken);
       await loadMonitors();
-      await loadNotificationData();
+      await loadRecipients();
       if (String(currentUser?.role || "").toUpperCase() === "ADMIN") {
+        await loadNotificationData();
         await loadAdminUsers();
       }
     } catch {
@@ -247,9 +267,9 @@ function App() {
     }
   }
 
-  async function loadMonitors() {
+  async function loadMonitors(silent = false) {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError("");
 
       const data = await getMonitors();
@@ -273,9 +293,31 @@ function App() {
           "Unable to load monitors.",
       );
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!token) return;
+
+    const refreshLiveData = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadMonitors(true);
+      void loadRecipients();
+      if (String(user?.role || "").toUpperCase() === "ADMIN") {
+        void loadNotificationData();
+      }
+    };
+
+    refreshLiveData();
+    const timer = window.setInterval(refreshLiveData, 5000);
+    document.addEventListener("visibilitychange", refreshLiveData);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshLiveData);
+    };
+  }, [token, user?.role]);
 
   async function loadNotificationData() {
     try {
@@ -304,6 +346,35 @@ function App() {
       );
     } finally {
       setNotificationLoading(false);
+    }
+  }
+
+  async function loadRecipients() {
+    try {
+      const recipientList = await getEmailRecipients();
+      setRecipients(Array.isArray(recipientList) ? recipientList : []);
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        logout();
+      }
+    }
+  }
+
+  async function addRecipientFromMonitor(email: string): Promise<void> {
+    if (String(user?.role || "").toUpperCase() !== "ADMIN") return;
+
+    setNotificationSaving(true);
+    try {
+      const recipient = await createEmailRecipient({
+        email: email.trim(),
+        name: null,
+      });
+      setRecipients((current) => [
+        ...current.filter((item) => item.id !== recipient.id),
+        recipient,
+      ]);
+    } finally {
+      setNotificationSaving(false);
     }
   }
 
@@ -337,8 +408,9 @@ function App() {
       setUser(currentUser);
 
       await loadMonitors();
-      await loadNotificationData();
+      await loadRecipients();
       if (String(currentUser?.role || "").toUpperCase() === "ADMIN") {
+        await loadNotificationData();
         await loadAdminUsers();
       }
       setPassword("");
@@ -462,6 +534,44 @@ function App() {
     }
   }
 
+  async function openUserPermissions(adminUser: AdminUser) {
+    setPermissionLoading(true);
+    setUserError("");
+    try {
+      const response = await getUserMonitorPermissions(adminUser.id);
+      setPermissionUser(adminUser);
+      setPermissionMonitorIds(response.monitor_ids);
+    } catch (err: any) {
+      setUserError(
+        err?.response?.data?.detail ||
+          err?.message ||
+          "Unable to load URL permissions.",
+      );
+    } finally {
+      setPermissionLoading(false);
+    }
+  }
+
+  async function saveUserPermissions() {
+    if (!permissionUser) return;
+    setPermissionSaving(true);
+    try {
+      await updateUserMonitorPermissions(
+        permissionUser.id,
+        permissionMonitorIds,
+      );
+      setPermissionUser(null);
+    } catch (err: any) {
+      setUserError(
+        err?.response?.data?.detail ||
+          err?.message ||
+          "Unable to save URL permissions.",
+      );
+    } finally {
+      setPermissionSaving(false);
+    }
+  }
+
   async function handleDeleteUser(adminUser: AdminUser) {
     if (adminUser.id === user?.id) {
       setUserError("You cannot delete your own account.");
@@ -507,7 +617,10 @@ function App() {
   }
 
   function openCreate() {
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      alert_emails: [],
+    });
     setSelectedMonitor(null);
     setModal("create");
   }
@@ -523,6 +636,11 @@ function App() {
       timeout_seconds: 10,
       interval_seconds: 60,
       ssl_enabled: monitor.ssl_enabled,
+      alert_emails: monitor.alert_emails?.length
+        ? monitor.alert_emails
+        : monitor.alert_email
+          ? [monitor.alert_email]
+          : [],
     });
 
     setModal("edit");
@@ -538,6 +656,11 @@ function App() {
       return;
     }
 
+    if (form.alert_emails.length === 0) {
+      setError("Select at least one alert recipient.");
+      return;
+    }
+
     const payload: MonitorCreate = {
       name: form.name.trim(),
       url: form.url.trim(),
@@ -546,6 +669,7 @@ function App() {
       timeout_seconds: Number(form.timeout_seconds),
       interval_seconds: Number(form.interval_seconds),
       ssl_enabled: form.ssl_enabled,
+      alert_emails: form.alert_emails,
     };
 
     try {
@@ -647,6 +771,22 @@ function App() {
     }
   }
 
+  async function runNotificationAction(
+    action: () => Promise<unknown>,
+    fallback: string,
+  ) {
+    try {
+      setNotificationSaving(true);
+      setNotificationError("");
+      await action();
+      await loadNotificationData();
+    } catch (err: any) {
+      setNotificationError(err?.response?.data?.detail || err?.message || fallback);
+    } finally {
+      setNotificationSaving(false);
+    }
+  }
+
   const total = monitors.length;
 
   const up = useMemo(
@@ -738,7 +878,7 @@ function App() {
           badge: down > 0 ? down : undefined,
         },
         {
-          label: "Alert Monitoring" as Page,
+          label: "Monitoring" as Page,
           icon: Bell,
         },
       ],
@@ -941,7 +1081,7 @@ function App() {
             </button>
 
             <button
-              onClick={() => setActivePage("Alert Monitoring")}
+              onClick={() => setActivePage("Monitoring")}
               className="relative rounded-xl border theme-border theme-surface-soft p-2.5 theme-text-muted hover:theme-text"
             >
               <Bell size={18} />
@@ -982,7 +1122,9 @@ function App() {
               loading={loading}
               onRefresh={loadMonitors}
               onAdd={openCreate}
-              onMonitorClick={openEdit}
+              onMonitorClick={(monitor) =>
+                monitor.can_edit ? openEdit(monitor) : void openHistory(monitor)
+              }
             />
           )}
 
@@ -1056,7 +1198,7 @@ function App() {
             </SimplePage>
           )}
 
-          {activePage === "Alert Monitoring" && (
+          {activePage === "Monitoring" && (
             <AlertMonitoringPage monitors={monitors} />
           )}
 
@@ -1085,11 +1227,15 @@ function App() {
                   setNotificationSaving(false);
                 }
               }}
+              onUpdate={(id, data) => runNotificationAction(() => updateEmailProvider(id, data), "Unable to update email provider.")}
+              onToggle={(provider) => runNotificationAction(() => provider.is_active ? disableEmailProvider(provider.id) : enableEmailProvider(provider.id), "Unable to change provider status.")}
+              onDelete={(provider) => runNotificationAction(() => deleteEmailProvider(provider.id), "Unable to delete email provider.")}
             />
           )}
 
           {activePage === "Recipients" && (
             <RecipientsPage
+              user={user}
               recipients={recipients}
               loading={notificationLoading}
               saving={notificationSaving}
@@ -1112,6 +1258,9 @@ function App() {
                   setNotificationSaving(false);
                 }
               }}
+              onUpdate={(id, data) => runNotificationAction(() => updateEmailRecipient(id, data), "Unable to update recipient.")}
+              onToggle={(recipient) => runNotificationAction(() => recipient.is_active ? disableEmailRecipient(recipient.id) : enableEmailRecipient(recipient.id), "Unable to change recipient status.")}
+              onDelete={(recipient) => runNotificationAction(() => deleteEmailRecipient(recipient.id), "Unable to delete recipient.")}
             />
           )}
 
@@ -1137,6 +1286,7 @@ function App() {
                 }}
                 onToggle={handleToggleUser}
                 onDelete={handleDeleteUser}
+                onManagePermissions={openUserPermissions}
               />
             )}
 
@@ -1174,6 +1324,13 @@ function App() {
           mode={modal}
           form={form}
           setForm={setForm}
+          alertEmailOptions={[
+            ...recipients
+              .filter((recipient) => recipient.is_active)
+              .map((recipient) => recipient.email),
+          ].filter((email, index, options) => options.indexOf(email) === index)}
+          canAddRecipient={String(user?.role || "").toUpperCase() === "ADMIN"}
+          onAddRecipient={addRecipientFromMonitor}
           saving={saving}
           onClose={() => setModal(null)}
           onSubmit={handleSaveMonitor}
@@ -1191,6 +1348,19 @@ function App() {
           }}
         />
       ) : null}
+
+      {permissionUser && (
+        <MonitorPermissionsModal
+          user={permissionUser}
+          monitors={monitors}
+          selectedMonitorIds={permissionMonitorIds}
+          setSelectedMonitorIds={setPermissionMonitorIds}
+          loading={permissionLoading}
+          saving={permissionSaving}
+          onClose={() => setPermissionUser(null)}
+          onSave={saveUserPermissions}
+        />
+      )}
     </div>
   );
 }
@@ -1222,6 +1392,16 @@ function DashboardPage({
   onAdd: () => void;
   onMonitorClick: (monitor: Monitor) => void;
 }) {
+  const hour = new Date().getHours();
+  const greeting =
+    hour < 12
+      ? "Good morning"
+      : hour < 17
+        ? "Good afternoon"
+        : hour < 21
+          ? "Good evening"
+          : "Good night";
+
   return (
     <>
       <div className="mb-7">
@@ -1232,7 +1412,7 @@ function DashboardPage({
         <div className="mt-1 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div>
             <h2 className="text-2xl font-bold tracking-tight theme-text sm:text-3xl">
-              Good morning,{" "}
+              {greeting},{" "}
               {user?.name ||
                 user?.email?.split("@")[0] ||
                 "Administrator"}
@@ -1333,6 +1513,8 @@ function DashboardPage({
                   <TableHeader>SSL</TableHeader>
                   <TableHeader>Active</TableHeader>
                   <TableHeader>Status</TableHeader>
+                  <TableHeader>Owner</TableHeader>
+                  <TableHeader>Shared with</TableHeader>
                   <TableHeader />
                 </tr>
               </thead>
@@ -1411,7 +1593,7 @@ function DashboardPage({
           <div className="flex items-start justify-between">
             <div>
               <h3 className="text-sm font-semibold theme-text">
-                Alert Monitoring
+                Monitoring
               </h3>
               <p className="mt-1 text-xs theme-text-muted">
                 Endpoints currently requiring attention
@@ -1554,6 +1736,8 @@ function MonitorsPage({
                   <TableHeader>SSL</TableHeader>
                   <TableHeader>Active</TableHeader>
                   <TableHeader>Status</TableHeader>
+                  <TableHeader>Owner</TableHeader>
+                  <TableHeader>Shared with</TableHeader>
                   <TableHeader>Actions</TableHeader>
                 </tr>
               </thead>
@@ -1659,32 +1843,47 @@ function MonitorsPage({
                         </div>
                       </td>
 
+                      <td className="px-5 py-4 text-xs theme-text-muted">
+                        {monitor.owner_email || "—"}
+                      </td>
+
+                      <td className="max-w-[260px] px-5 py-4 text-xs theme-text-muted">
+                        {monitor.assigned_user_emails.length > 0
+                          ? monitor.assigned_user_emails.join(", ")
+                          : "—"}
+                      </td>
+
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-1">
+                          {monitor.can_edit && (
                           <button
                             disabled={busy}
                             onClick={() =>
                               onToggle(monitor)
                             }
-                            className="rounded-lg px-2.5 py-2 text-[10px] font-semibold text-cyan-600 hover:brightness-110/10 disabled:opacity-50"
+                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[10px] font-semibold text-cyan-600 hover:brightness-110/10 disabled:opacity-50"
                           >
+                            <Power size={13} />
                             {busy
                               ? "..."
                               : monitor.is_active
                                 ? "Disable"
                                 : "Enable"}
                           </button>
+                          )}
 
                           <button
                             onClick={() =>
                               onHistory(monitor)
                             }
-                            className="rounded-lg p-2 theme-text-muted hover:theme-hover hover:theme-text"
+                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[10px] font-semibold theme-text-muted hover:theme-hover hover:theme-text"
                             title="History"
                           >
-                            <ChevronRight size={16} />
+                            <History size={14} />
+                            History
                           </button>
 
+                          {monitor.can_edit && (
                           <button
                             onClick={() =>
                               onEdit(monitor)
@@ -1693,7 +1892,9 @@ function MonitorsPage({
                           >
                             Edit
                           </button>
+                          )}
 
+                          {monitor.can_delete && (
                           <button
                             onClick={() =>
                               onDelete(monitor)
@@ -1704,6 +1905,7 @@ function MonitorsPage({
                           >
                             <Trash2 size={15} />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1722,6 +1924,9 @@ function MonitorModal({
   mode,
   form,
   setForm,
+  alertEmailOptions,
+  canAddRecipient,
+  onAddRecipient,
   saving,
   onClose,
   onSubmit,
@@ -1731,12 +1936,43 @@ function MonitorModal({
   setForm: React.Dispatch<
     React.SetStateAction<FormState>
   >;
+  alertEmailOptions: string[];
+  canAddRecipient: boolean;
+  onAddRecipient: (email: string) => Promise<void>;
   saving: boolean;
   onClose: () => void;
   onSubmit: (
     event: React.FormEvent<HTMLFormElement>,
   ) => void;
 }) {
+  const [addingRecipient, setAddingRecipient] = useState(false);
+  const [newRecipientEmail, setNewRecipientEmail] = useState("");
+  const [recipientError, setRecipientError] = useState("");
+  const [showRecipientMenu, setShowRecipientMenu] = useState(false);
+
+  async function handleAddRecipient() {
+    const email = newRecipientEmail.trim();
+    if (!email || !email.includes("@")) {
+      setRecipientError("Enter a valid email address.");
+      return;
+    }
+
+    try {
+      setRecipientError("");
+      await onAddRecipient(email);
+      setForm((current) => ({
+        ...current,
+        alert_emails: [...new Set([...current.alert_emails, email])],
+      }));
+      setNewRecipientEmail("");
+      setAddingRecipient(false);
+    } catch (error: any) {
+      setRecipientError(
+        error?.response?.data?.detail || "Unable to add recipient.",
+      );
+    }
+  }
+
   return (
     <Modal
       title={
@@ -1776,6 +2012,99 @@ function MonitorModal({
             className="input"
             placeholder="https://example.com"
           />
+        </Field>
+
+        <Field label="Alert recipients">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowRecipientMenu((current) => !current)}
+              className="input flex w-full items-center justify-between text-left"
+            >
+              <span className="truncate">
+                {form.alert_emails.length === 0
+                  ? "Select alert recipients"
+                  : `${form.alert_emails.length} recipient${form.alert_emails.length === 1 ? "" : "s"} selected`}
+              </span>
+              <ChevronDown size={16} className="shrink-0 theme-text-muted" />
+            </button>
+
+            {showRecipientMenu && (
+              <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl border theme-border theme-surface p-2 shadow-xl">
+                {alertEmailOptions.length === 0 ? (
+                  <div className="p-2 text-xs theme-text-muted">
+                    No active recipients available.
+                  </div>
+                ) : (
+                  alertEmailOptions.map((email) => (
+                    <label key={email} className="flex cursor-pointer items-center gap-2 rounded-lg p-2 text-sm theme-text-secondary hover:theme-hover">
+                      <input
+                        type="checkbox"
+                        checked={form.alert_emails.includes(email)}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            alert_emails: event.target.checked
+                              ? [...new Set([...current.alert_emails, email])]
+                              : current.alert_emails.filter((item) => item !== email),
+                          }))
+                        }
+                        className="h-4 w-4 accent-cyan-400"
+                      />
+                      <span className="truncate">{email}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <div className="mt-1 text-xs theme-text-muted">
+            {form.alert_emails.length} recipient{form.alert_emails.length === 1 ? "" : "s"} selected
+          </div>
+          {canAddRecipient && (
+            <div className="mt-2">
+              {!addingRecipient ? (
+                <button
+                  type="button"
+                  onClick={() => setAddingRecipient(true)}
+                  className="text-xs font-semibold text-cyan-600 hover:underline"
+                >
+                  + Add new recipient email
+                </button>
+              ) : (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    autoFocus
+                    type="email"
+                    value={newRecipientEmail}
+                    onChange={(event) => setNewRecipientEmail(event.target.value)}
+                    className="input flex-1"
+                    placeholder="new-recipient@example.com"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleAddRecipient()}
+                    className="rounded-xl bg-cyan-500 px-3 py-2 text-xs font-semibold text-white"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddingRecipient(false);
+                      setRecipientError("");
+                    }}
+                    className="rounded-xl border theme-border px-3 py-2 text-xs theme-text-muted"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+              {recipientError && (
+                <div className="mt-1 text-xs text-red-400">{recipientError}</div>
+              )}
+            </div>
+          )}
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -2098,6 +2427,9 @@ function EmailProvidersPage({
   error,
   onRefresh,
   onCreate,
+  onUpdate,
+  onToggle,
+  onDelete,
 }: {
   user: User | null;
   providers: EmailProvider[];
@@ -2106,10 +2438,18 @@ function EmailProvidersPage({
   error: string;
   onRefresh: () => void;
   onCreate: (data: EmailProviderCreate) => Promise<void>;
+  onUpdate: (id: number, data: EmailProviderCreate) => Promise<void>;
+  onToggle: (provider: EmailProvider) => Promise<void>;
+  onDelete: (provider: EmailProvider) => Promise<void>;
 }) {
   const [showForm, setShowForm] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<EmailProvider | null>(null);
   const [permissionError, setPermissionError] = useState("");
   const canManageProviders = String(user?.role || "").toUpperCase() === "ADMIN";
+  const [form, setForm] = useState<EmailProviderCreate>({
+    name: "", provider_type: "smtp", host: "", port: 587, username: "",
+    secret: "", from_email: "", from_name: "Novus", tls_enabled: true, is_default: false,
+  });
 
   const denyProviderManagement = () => {
     setPermissionError("Permission denied. Only administrators can add or manage email providers.");
@@ -2146,19 +2486,6 @@ function EmailProvidersPage({
     );
   }
 
-  const [form, setForm] = useState<EmailProviderCreate>({
-    name: "",
-    provider_type: "smtp",
-    host: "",
-    port: 587,
-    username: "",
-    secret: "",
-    from_email: "",
-    from_name: "Novus",
-    tls_enabled: true,
-    is_default: false,
-  });
-
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManageProviders) {
@@ -2166,7 +2493,7 @@ function EmailProvidersPage({
       return;
     }
     if (!form.name.trim() || !form.host?.trim() || !form.from_email.trim()) return;
-    await onCreate({
+    const data = {
       ...form,
       name: form.name.trim(),
       host: form.host?.trim() || null,
@@ -2175,13 +2502,33 @@ function EmailProvidersPage({
       from_email: form.from_email.trim(),
       from_name: form.from_name?.trim() || "Novus",
       port: Number(form.port) || 587,
-    });
+    };
+    if (editingProvider) await onUpdate(editingProvider.id, data);
+    else await onCreate(data);
     setForm({
       name: "", provider_type: "smtp", host: "", port: 587,
       username: "", secret: "", from_email: "", from_name: "Novus",
       tls_enabled: true, is_default: false,
     });
     setShowForm(false);
+    setEditingProvider(null);
+  }
+
+  function startEdit(provider: EmailProvider) {
+    setEditingProvider(provider);
+    setForm({
+      name: provider.name,
+      provider_type: provider.provider_type,
+      host: provider.host || "",
+      port: provider.port || 587,
+      username: provider.username || "",
+      secret: "",
+      from_email: provider.from_email,
+      from_name: provider.from_name || "Novus",
+      tls_enabled: provider.tls_enabled,
+      is_default: provider.is_default,
+    });
+    setShowForm(true);
   }
 
   return (
@@ -2207,6 +2554,7 @@ function EmailProvidersPage({
                 return;
               }
               setPermissionError("");
+              setEditingProvider(null);
               setShowForm((v) => !v);
             }}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 hover:brightness-110"
@@ -2233,8 +2581,8 @@ function EmailProvidersPage({
       {showForm && (
         <form onSubmit={submit} className="mb-5 rounded-2xl border theme-border theme-surface p-5">
           <div className="mb-5 flex items-center justify-between">
-            <div><h3 className="text-sm font-semibold theme-text">Add SMTP Provider</h3><p className="mt-1 text-xs theme-text-muted">Enter the SMTP connection details.</p></div>
-            <button type="button" onClick={() => setShowForm(false)} className="rounded-lg p-2 theme-text-muted hover:theme-hover"><X size={17}/></button>
+            <div><h3 className="text-sm font-semibold theme-text">{editingProvider ? "Edit SMTP Provider" : "Add SMTP Provider"}</h3><p className="mt-1 text-xs theme-text-muted">Enter the SMTP connection details.</p></div>
+            <button type="button" onClick={() => { setShowForm(false); setEditingProvider(null); }} className="rounded-lg p-2 theme-text-muted hover:theme-hover"><X size={17}/></button>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Provider Name"><input required className="input" value={form.name} onChange={e => setForm(f => ({...f,name:e.target.value}))} placeholder="Microsoft 365 SMTP" /></Field>
@@ -2250,15 +2598,15 @@ function EmailProvidersPage({
             <label className="flex items-center gap-2 text-sm theme-text-secondary"><input type="checkbox" checked={!!form.tls_enabled} onChange={e => setForm(f => ({...f,tls_enabled:e.target.checked}))} className="h-4 w-4 accent-cyan-400"/> TLS Enabled</label>
             <label className="flex items-center gap-2 text-sm theme-text-secondary"><input type="checkbox" checked={!!form.is_default} onChange={e => setForm(f => ({...f,is_default:e.target.checked}))} className="h-4 w-4 accent-cyan-400"/> Set as Default</label>
           </div>
-          <div className="mt-5 flex justify-end"><button type="submit" disabled={saving || !canManageProviders} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 hover:brightness-110 disabled:opacity-50">{saving && <RefreshCw size={15} className="animate-spin"/>}{saving ? "Saving..." : "Save Provider"}</button></div>
+          <div className="mt-5 flex justify-end"><button type="submit" disabled={saving || !canManageProviders} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 hover:brightness-110 disabled:opacity-50">{saving && <RefreshCw size={15} className="animate-spin"/>}{saving ? "Saving..." : editingProvider ? "Update Provider" : "Save Provider"}</button></div>
         </form>
       )}
 
       <section className="overflow-hidden rounded-2xl border theme-border theme-surface">
         <div className="border-b theme-border p-5"><h3 className="text-sm font-semibold theme-text">Configured Providers</h3><p className="mt-1 text-xs theme-text-muted">Providers returned by the Novus API.</p></div>
         {providers.length === 0 ? <EmptyState icon={<Server size={32}/>} title="No email providers" description={canManageProviders ? "Add an SMTP provider to enable notification delivery." : "No email provider is configured for notification delivery."}/> :
-          <div className="overflow-x-auto"><table className="w-full min-w-[850px]"><thead><tr className="border-b theme-border-soft text-left"><TableHeader>Name</TableHeader><TableHeader>Type</TableHeader><TableHeader>Host</TableHeader><TableHeader>From</TableHeader><TableHeader>TLS</TableHeader><TableHeader>Default</TableHeader></tr></thead><tbody>
-            {providers.map(p => <tr key={p.id} className="border-b theme-border-soft hover:theme-hover"><td className="px-5 py-4 text-sm font-medium theme-text-secondary">{p.name}</td><td className="px-5 py-4 text-xs theme-text-muted">{p.provider_type}</td><td className="px-5 py-4 text-xs theme-text-muted">{p.host || "—"}{p.port ? `:${p.port}` : ""}</td><td className="px-5 py-4 text-xs theme-text-muted">{p.from_email}</td><td className="px-5 py-4 text-xs">{p.tls_enabled ? <span className="text-emerald-300">Enabled</span> : <span className="theme-text-muted">Disabled</span>}</td><td className="px-5 py-4">{p.is_default ? <span className="rounded-full bg-blue-500/10 px-2.5 py-1 text-[10px] font-bold text-cyan-600">DEFAULT</span> : <span className="text-xs theme-text-faint">—</span>}</td></tr>)}
+          <div className="overflow-x-auto"><table className="w-full min-w-[1050px]"><thead><tr className="border-b theme-border-soft text-left"><TableHeader>Name</TableHeader><TableHeader>Type</TableHeader><TableHeader>Host</TableHeader><TableHeader>From</TableHeader><TableHeader>TLS</TableHeader><TableHeader>Status</TableHeader><TableHeader>Default</TableHeader><TableHeader>Actions</TableHeader></tr></thead><tbody>
+            {providers.map(p => <tr key={p.id} className="border-b theme-border-soft hover:theme-hover"><td className="px-5 py-4 text-sm font-medium theme-text-secondary">{p.name}</td><td className="px-5 py-4 text-xs theme-text-muted">{p.provider_type}</td><td className="px-5 py-4 text-xs theme-text-muted">{p.host || "—"}{p.port ? `:${p.port}` : ""}</td><td className="px-5 py-4 text-xs theme-text-muted">{p.from_email}</td><td className="px-5 py-4 text-xs">{p.tls_enabled ? <span className="text-emerald-300">Enabled</span> : <span className="theme-text-muted">Disabled</span>}</td><td className="px-5 py-4 text-xs">{p.is_active ? <span className="text-emerald-300">Active</span> : <span className="text-amber-300">Disabled</span>}</td><td className="px-5 py-4">{p.is_default ? <span className="rounded-full bg-blue-500/10 px-2.5 py-1 text-[10px] font-bold text-cyan-600">DEFAULT</span> : <span className="text-xs theme-text-faint">—</span>}</td><td className="px-5 py-4"><div className="flex items-center gap-1"><button title="Edit provider" onClick={() => startEdit(p)} className="rounded-lg p-2 theme-text-muted hover:theme-hover"><Pencil size={15}/></button><button title={p.is_active ? "Disable provider" : "Enable provider"} onClick={() => onToggle(p)} className="rounded-lg p-2 theme-text-muted hover:theme-hover">{p.is_active ? <Moon size={15}/> : <CheckCircle2 size={15}/>}</button><button title="Delete provider" onClick={() => { if (window.confirm(`Delete provider ${p.name}?`)) void onDelete(p); }} className="rounded-lg p-2 text-red-400 hover:bg-red-400/10"><Trash2 size={15}/></button></div></td></tr>)}
           </tbody></table></div>}
       </section>
     </>
@@ -2266,36 +2614,137 @@ function EmailProvidersPage({
 }
 
 function RecipientsPage({
-  recipients, loading, saving, error, onRefresh, onCreate,
+  user, recipients, loading, saving, error, onRefresh, onCreate, onUpdate, onToggle, onDelete,
 }: {
+  user: User | null;
   recipients: EmailRecipient[];
   loading: boolean;
   saving: boolean;
   error: string;
   onRefresh: () => void;
   onCreate: (data: EmailRecipientCreate) => Promise<void>;
+  onUpdate: (id: number, data: EmailRecipientCreate) => Promise<void>;
+  onToggle: (recipient: EmailRecipient) => Promise<void>;
+  onDelete: (recipient: EmailRecipient) => Promise<void>;
 }) {
   const [showForm, setShowForm] = useState(false);
+  const [editingRecipient, setEditingRecipient] = useState<EmailRecipient | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const canManageRecipients = String(user?.role || "").toUpperCase() === "ADMIN";
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!email.trim()) return;
-    await onCreate({ email: email.trim(), name: name.trim() || null });
-    setName(""); setEmail(""); setShowForm(false);
+    const data = { email: email.trim(), name: name.trim() || null };
+    if (editingRecipient) await onUpdate(editingRecipient.id, data);
+    else await onCreate(data);
+    setName(""); setEmail(""); setShowForm(false); setEditingRecipient(null);
+  }
+
+  function startEdit(recipient: EmailRecipient) {
+    setEditingRecipient(recipient);
+    setName(recipient.name || "");
+    setEmail(recipient.email);
+    setShowForm(true);
+  }
+
+  if (!canManageRecipients) {
+    return <SimplePage title="Recipients" description="Only administrators can manage alert recipients." icon={<AlertCircle size={22} />}><EmptyState icon={<AlertCircle size={32}/>} title="Permission denied" description="Administrator access required." /></SimplePage>;
   }
 
   return (
     <>
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div><div className="flex items-center gap-3 text-cyan-600"><Bell size={22}/><span className="text-sm theme-text-muted">Notification configuration</span></div><h2 className="mt-2 text-2xl font-bold theme-text">Recipients</h2><p className="mt-2 text-sm theme-text-muted">Manage email addresses that receive monitoring alerts.</p></div>
-        <div className="flex gap-2"><button onClick={onRefresh} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface-soft px-4 py-2.5 text-sm theme-text-muted disabled:opacity-50"><RefreshCw size={15} className={loading ? "animate-spin" : ""}/> Refresh</button><button onClick={() => setShowForm(v => !v)} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 hover:brightness-110"><Plus size={17}/> Add Recipient</button></div>
+        <div className="flex gap-2"><button onClick={onRefresh} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border theme-border theme-surface-soft px-4 py-2.5 text-sm theme-text-muted disabled:opacity-50"><RefreshCw size={15} className={loading ? "animate-spin" : ""}/> Refresh</button><button onClick={() => { setEditingRecipient(null); setName(""); setEmail(""); setShowForm(v => !v); }} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 hover:brightness-110"><Plus size={17}/> Add Recipient</button></div>
       </div>
       {error && <div className="mb-5 rounded-xl border border-red-400/20 bg-red-400/[0.07] p-4 text-sm text-red-300">{error}</div>}
-      {showForm && <form onSubmit={submit} className="mb-5 rounded-2xl border theme-border theme-surface p-5"><div className="grid gap-4 md:grid-cols-2"><Field label="Name"><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Operations Team"/></Field><Field label="Email"><input required type="email" className="input" value={email} onChange={e => setEmail(e.target.value)} placeholder="ops@example.com"/></Field></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setShowForm(false)} className="rounded-xl border theme-border px-4 py-2.5 text-sm theme-text-muted">Cancel</button><button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 hover:brightness-110 disabled:opacity-50">{saving && <RefreshCw size={15} className="animate-spin"/>}{saving ? "Saving..." : "Save Recipient"}</button></div></form>}
-      <section className="overflow-hidden rounded-2xl border theme-border theme-surface"><div className="border-b theme-border p-5"><h3 className="text-sm font-semibold theme-text">Alert Recipients</h3><p className="mt-1 text-xs theme-text-muted">Recipients returned by the Novus API.</p></div>{recipients.length === 0 ? <EmptyState icon={<Bell size={32}/>} title="No recipients" description="Add an email recipient to receive alerts."/> : <div className="overflow-x-auto"><table className="w-full min-w-[600px]"><thead><tr className="border-b theme-border-soft text-left"><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>ID</TableHeader></tr></thead><tbody>{recipients.map(r => <tr key={r.id} className="border-b theme-border-soft hover:theme-hover"><td className="px-5 py-4 text-sm theme-text-secondary">{r.name || "—"}</td><td className="px-5 py-4 text-sm theme-text-muted">{r.email}</td><td className="px-5 py-4 text-xs theme-text-faint">#{r.id}</td></tr>)}</tbody></table></div>}</section>
+      {showForm && <form onSubmit={submit} className="mb-5 rounded-2xl border theme-border theme-surface p-5"><div className="grid gap-4 md:grid-cols-2"><Field label="Name"><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Operations Team"/></Field><Field label="Email"><input required type="email" className="input" value={email} onChange={e => setEmail(e.target.value)} placeholder="ops@example.com"/></Field></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => { setShowForm(false); setEditingRecipient(null); }} className="rounded-xl border theme-border px-4 py-2.5 text-sm theme-text-muted">Cancel</button><button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-500 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 hover:brightness-110 disabled:opacity-50">{saving && <RefreshCw size={15} className="animate-spin"/>}{saving ? "Saving..." : editingRecipient ? "Update Recipient" : "Save Recipient"}</button></div></form>}
+      <section className="overflow-hidden rounded-2xl border theme-border theme-surface"><div className="border-b theme-border p-5"><h3 className="text-sm font-semibold theme-text">Alert Recipients</h3><p className="mt-1 text-xs theme-text-muted">Recipients returned by the Novus API.</p></div>{recipients.length === 0 ? <EmptyState icon={<Bell size={32}/>} title="No recipients" description="Add an email recipient to receive alerts."/> : <div className="overflow-x-auto"><table className="w-full min-w-[850px]"><thead><tr className="border-b theme-border-soft text-left"><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Status</TableHeader><TableHeader>Actions</TableHeader></tr></thead><tbody>{recipients.map(r => <tr key={r.id} className="border-b theme-border-soft hover:theme-hover"><td className="px-5 py-4 text-sm theme-text-secondary">{r.name || "—"}</td><td className="px-5 py-4 text-sm theme-text-muted">{r.email}</td><td className="px-5 py-4 text-xs">{r.is_active ? <span className="text-emerald-300">Active</span> : <span className="text-amber-300">Disabled</span>}</td><td className="px-5 py-4"><div className="flex items-center gap-1"><button title="Edit recipient" onClick={() => startEdit(r)} className="rounded-lg p-2 theme-text-muted hover:theme-hover"><Pencil size={15}/></button><button title={r.is_active ? "Disable recipient" : "Enable recipient"} onClick={() => onToggle(r)} className="rounded-lg p-2 theme-text-muted hover:theme-hover">{r.is_active ? <Moon size={15}/> : <CheckCircle2 size={15}/>}</button><button title="Delete recipient" onClick={() => { if (window.confirm(`Delete recipient ${r.email}?`)) void onDelete(r); }} className="rounded-lg p-2 text-red-400 hover:bg-red-400/10"><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>}</section>
     </>
+  );
+}
+
+function MonitorPermissionsModal({
+  user,
+  monitors,
+  selectedMonitorIds,
+  setSelectedMonitorIds,
+  loading,
+  saving,
+  onClose,
+  onSave,
+}: {
+  user: AdminUser;
+  monitors: Monitor[];
+  selectedMonitorIds: number[];
+  setSelectedMonitorIds: React.Dispatch<React.SetStateAction<number[]>>;
+  loading: boolean;
+  saving: boolean;
+  onClose: () => void;
+  onSave: () => Promise<void>;
+}) {
+  function toggleMonitor(monitorId: number) {
+    setSelectedMonitorIds((current) =>
+      current.includes(monitorId)
+        ? current.filter((id) => id !== monitorId)
+        : [...current, monitorId],
+    );
+  }
+
+  return (
+    <Modal title={`URLs for ${user.email}`} onClose={onClose}>
+      <p className="mb-4 text-sm theme-text-muted">
+        Select the URLs this {user.role === "VIEWER" ? "viewer" : "manager"} can see.
+      </p>
+      {loading ? (
+        <div className="py-8 text-center text-sm theme-text-muted">Loading permissions...</div>
+      ) : monitors.length === 0 ? (
+        <div className="py-8 text-center text-sm theme-text-muted">No URLs have been created yet.</div>
+      ) : (
+        <div className="max-h-[50vh] space-y-2 overflow-y-auto">
+          {monitors.map((monitor) => (
+            <label
+              key={monitor.id}
+              className="flex cursor-pointer items-center gap-3 rounded-xl border theme-border theme-surface-soft p-3 hover:theme-hover"
+            >
+              <input
+                type="checkbox"
+                checked={selectedMonitorIds.includes(monitor.id)}
+                onChange={() => toggleMonitor(monitor.id)}
+                className="h-4 w-4 accent-cyan-400"
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium theme-text-secondary">
+                  {monitor.name}
+                </span>
+                <span className="block truncate text-xs theme-text-muted">
+                  {monitor.url}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-xl border theme-border px-4 py-2.5 text-sm theme-text-muted"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => void onSave()}
+          disabled={loading || saving}
+          className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save URL Access"}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -2316,6 +2765,7 @@ function AdminUsersPage({
   onCancel,
   onToggle,
   onDelete,
+  onManagePermissions,
 }: {
   users: AdminUser[];
   currentUserId?: number | string;
@@ -2333,6 +2783,7 @@ function AdminUsersPage({
   onCancel: () => void;
   onToggle: (user: AdminUser) => void;
   onDelete: (user: AdminUser) => void;
+  onManagePermissions: (user: AdminUser) => void;
 }) {
   return (
     <>
@@ -2543,6 +2994,17 @@ function AdminUsersPage({
                             Edit
                           </button>
 
+                          {adminUser.role !== "ADMIN" && (
+                            <button
+                              onClick={() => onManagePermissions(adminUser)}
+                              disabled={busy}
+                              className="inline-flex items-center gap-1.5 rounded-lg border theme-border px-3 py-2 text-xs theme-text-secondary hover:theme-hover disabled:opacity-50"
+                            >
+                              <Globe2 size={14} />
+                              URLs
+                            </button>
+                          )}
+
                           <button
                             onClick={() => onToggle(adminUser)}
                             disabled={busy || isSelf}
@@ -2597,7 +3059,7 @@ function AlertMonitoringPage({
             Alert center
           </div>
           <h2 className="mt-1 text-2xl font-bold theme-text">
-            Alert Monitoring
+            Monitoring
           </h2>
           <p className="mt-2 text-sm theme-text-muted">
             Monitor endpoint alerts and quickly identify services that need attention.
@@ -3047,6 +3509,16 @@ function MonitorRow({
         >
           {String(monitor.status).toUpperCase()}
         </span>
+      </td>
+
+      <td className="px-5 py-4 text-xs theme-text-muted">
+        {monitor.owner_email || "—"}
+      </td>
+
+      <td className="max-w-[260px] px-5 py-4 text-xs theme-text-muted">
+        {monitor.assigned_user_emails.length > 0
+          ? monitor.assigned_user_emails.join(", ")
+          : "—"}
       </td>
 
       <td className="px-5 py-4 text-right">
