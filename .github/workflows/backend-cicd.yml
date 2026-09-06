@@ -28,28 +28,41 @@ jobs:
       - name: Check Python
         run: |
           python3 --version
+          python3 -m pip --version || true
 
-      - name: Activate virtual environment
+      - name: Create virtual environment
         run: |
-          test -f venv/bin/activate
-          source venv/bin/activate
-          python --version
+          set -e
+
+          echo "Creating Python virtual environment..."
+
+          python3 -m venv venv
+
+          test -x venv/bin/python
+          test -x venv/bin/pip
+
+          echo "Virtual environment created successfully"
+          ./venv/bin/python --version
+          ./venv/bin/pip --version
 
       - name: Install dependencies
         run: |
-          source venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          set -e
+
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install -r requirements.txt
 
       - name: Compile Python files
         run: |
-          source venv/bin/activate
-          python -m compileall app
+          set -e
+
+          ./venv/bin/python -m compileall app
 
       - name: Run tests
         run: |
-          source venv/bin/activate
-          pytest -q
+          set -e
+
+          ./venv/bin/python -m pytest -q
 
       - name: Deploy backend
         run: |
@@ -67,6 +80,10 @@ jobs:
           test -d "$SOURCE_DIR/app"
           test -f "$SOURCE_DIR/requirements.txt"
 
+          echo "Checking production directory..."
+
+          test -d "$DEPLOY_DIR"
+
           echo "Syncing application files..."
 
           rsync -a \
@@ -77,19 +94,32 @@ jobs:
             "$SOURCE_DIR/" \
             "$DEPLOY_DIR/"
 
-          echo "Activating production virtual environment..."
+          echo "Entering production directory..."
 
           cd "$DEPLOY_DIR"
 
-          source venv/bin/activate
+          echo "Checking production virtual environment..."
+
+          if [ ! -x "venv/bin/python" ]; then
+            echo "Production virtual environment missing."
+            echo "Creating production virtual environment..."
+
+            python3 -m venv venv
+          fi
+
+          test -x venv/bin/python
+
+          echo "Production Python version:"
+          ./venv/bin/python --version
 
           echo "Installing production dependencies..."
 
-          python -m pip install -r requirements.txt
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install -r requirements.txt
 
           echo "Compiling application..."
 
-          python -m compileall app
+          ./venv/bin/python -m compileall app
 
           echo "Restarting backend services..."
 
